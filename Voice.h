@@ -3,9 +3,9 @@
 class Voice {
 public:
 
-  int arpNum;
-  int delay;
-  int octave;
+  int arpNum = 0;
+  int delay = 0;
+  int octave = 0;
   Voice();
   int UpdateVoice();
 
@@ -18,31 +18,30 @@ public:
   void SetArpNum(int val);
 
 private:
-  int effect;
-  int sampleLen;
-  bool isDelay;
-  int arpCount;
-  int arps[4][4];
-  int envelopeLength;
-  int envelope;
-  int envelopeNum;
-  int voiceNum;
-  int output;
-  int note;
-  int sampleHistory[2000];
-  int sampleHistoryIndex=0;
+  // In-class initializers: on-device these relied on static zero-init of the
+  // global Tracker; stack instances (native tests) must be safe too.
+  int effect_ = 0;
+  bool isDelay_ = false;
+  int arpCount_ = 0;
+  int envelopeLength_ = 60000;
+  int envelope_ = 0;
+  int envelopeNum_ = 0;
+  int voiceNum_ = 0;
+  int output_ = 0;
+  int note_ = 0;
+  int sampleHistory_[2000] = {};
+  int sampleHistoryIndex_=0;
 
-  float baseFreq;
-  float sampleIndex;
-  float sampleIndexNext;
-  float volume;
+  float baseFreq_ = 1;
+  float sampleIndex_ = 0;
+  float sampleIndexNext_ = 0;
+  float volume_ = 1;
   
   int ReadWaveform();
   int ReadDrumWaveform();
   int ReadSfxWaveform();
   float GetBaseFreq(int val,int ioctave);
   float GetVolumeRatio();
-  void SetupArps();
   float LerpSample(int sampleA, int sampleB, float ratio);
   void UpdateHistory(int);
   int GetHistorySample(int backOffset);
