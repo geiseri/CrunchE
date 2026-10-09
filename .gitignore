@@ -10,3 +10,6 @@ compile_commands.json
 default_4MB.csv
 # Redundant: the pristine WAVs in Samples_src are the reproducible source.
 Samples/pre_loop_backup/
+# GitHub Pages artifact worktree (release.sh)
+.gh-pages/
+dist/

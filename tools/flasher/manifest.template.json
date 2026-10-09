@@ -1,0 +1,14 @@
+{
+  "name": "CrunchE",
+  "version": "0.0.0-placeholder",
+  "new_install_prompt_erase": true,
+  "new_install_improv_wait_time": 0,
+  "funding_url": "https://github.com/geiseri/CrunchE",
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "improv": false,
+      "parts": [{ "path": "merged.bin", "offset": 0 }]
+    }
+  ]
+}
