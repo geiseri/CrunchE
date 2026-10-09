@@ -1,0 +1,12 @@
+# Python deps for the CrunchE tools pipeline (tools/).
+# Install into the PlatformIO venv (the pipeline's interpreter):
+#   ~/.platformio/penv/bin/pip install -r tools/requirements.txt
+# Re-validate the whole chain afterwards:
+#   sh tools/gen_all.sh && sh tests/native/build_and_run.sh
+#
+# numpy + scipy : sample pipeline DSP (loops.py resample/seam search,
+#                 samplelib.py A-weighted loudness for SampleGains.h)
+# pillow        : make_instruction_image.py (docs/InstA.png keypad sheet)
+numpy==2.4.6
+scipy==1.17.1
+pillow==12.3.0
