@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CrunchE — update firmware</title>
+    <script
+      type="module"
+      src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+    <style>
+      body{font:16px/1.6 system-ui;max-width:38rem;margin:3rem auto;padding:0 1rem;color:#111;}
+      code{background:#f2f2f2;padding:.1em .35em;border-radius:3px}
+      esp-web-install-button{display:block;margin:2rem 0}
+      button{font:inherit;padding:.7rem 1.4rem;border:0;border-radius:.5rem;background:#111;color:#fff;cursor:pointer}
+      ol{padding-left:1.2rem}
+    </style>
+  </head>
+  <body>
+    <h1>CrunchE firmware updater</h1>
+    <p>
+      No software to install. This page talks to your CrunchE directly over USB.
+    </p>
+    <ol>
+      <li>
+        Plug CrunchE into the computer with a <strong>data</strong> USB&#8209;C
+        cable.
+      </li>
+      <li>
+        Press <em>Connect</em> below and choose the <code>USB Serial</code> /
+        <code>303A:1001</code> port.
+      </li>
+      <li>Press <em>Install</em>. It reboots itself when finished.</li>
+    </ol>
+    <p>
+      If no port appears: hold <strong>BOOT</strong>, tap <strong>RST</strong>,
+      release BOOT, then press Connect.
+    </p>
+
+    <esp-web-install-button manifest="../firmware/latest/manifest.json">
+      <button slot="activate">Connect</button>
+      <span slot="unsupported">
+        Your browser can&#8217;t open serial ports. Use <strong>Chrome</strong>,
+        <strong>Edge</strong>, or <strong>Firefox 151+</strong> on a computer
+        &#8212; Safari (including iPhone) has no Web Serial support.
+      </span>
+      <span slot="not-allowed">This updater must be opened over HTTPS.</span>
+    </esp-web-install-button>
+
+    <p>
+      <a href="https://github.com/geiseri/CrunchE">Source &amp; changelog</a>
+    </p>
+  </body>
+</html>
