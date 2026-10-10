@@ -9,12 +9,14 @@
 #include "LedManager.h"
 #include "InputManager.h"
 #include "Tracker.h"
+#include "EarCal.h"
 
 // Pins come from platformio.ini build_flags (PIN_*).
 
 LedManager ledManager(PIN_LED_A, PIN_LED_B, PIN_LED_C, PIN_LED_D);
 InputManager inputManager;
 Tracker tracker;
+EarCal earCal;
 
 // Keypad: silkscreen F1-F4 / G#-B / E-G / C-D#; matrix L1-L4 × R4-R1.
 constexpr byte kKeypadRows = 4;
@@ -47,10 +49,12 @@ CRGB leds[kNumLeds];
 int ledPeak = 0;
 uint8_t ledBrightness = 0;
 uint32_t lastLedUpdate = 0;
+bool earCalActive = false;
 
 // Soft ~2 s Cmaj9 swell through OutputMixer. Voices are static: each embeds
 // an 8 KB history buffer; a local array would overflow the Arduino task stack.
-static void playBootJingle() {
+// Returns true if F4 was held long enough to enter ear-calibration mode.
+static bool playBootJingle() {
   struct Part {
     int instrument;
     int note;
@@ -68,10 +72,30 @@ static void playBootJingle() {
   const uint32_t stagger = kRate / 9;         // ~110 ms between voices
   const uint32_t release = kRate * 3 / 10;    // final 300 ms fade
 
+  uint32_t bootHoldMs = 0;
+  uint32_t bootHoldLastMs = 0;
+  bool enterEarCal = false;
+  uint32_t samplesUntilPoll = kEarCalBootPollSamples;
+
+  auto pollBootHold = [&]() {
+    if (enterEarCal) {
+      return;
+    }
+    if (samplesUntilPoll > 0) {
+      --samplesUntilPoll;
+      return;
+    }
+    samplesUntilPoll = kEarCalBootPollSamples;
+    if (UpdateEarCalBootHold(keypad, bootHoldMs, bootHoldLastMs)) {
+      enterEarCal = true;
+    }
+  };
+
   // Let amp/SD_MODE settle before the swell so the power-on transient is silent.
   const int16_t silence = 0;
   for (uint32_t frame = 0; frame < kRate * 12 / 100; frame++) {  // ~120 ms
     I2S.write(reinterpret_cast<const uint8_t *>(&silence), sizeof(silence));
+    pollBootHold();
   }
 
   for (int voiceIndex = 0; voiceIndex < 4; voiceIndex++) {
@@ -104,7 +128,9 @@ static void playBootJingle() {
     const int16_t outputSample = StageMasterSample(mix);
     I2S.write(reinterpret_cast<const uint8_t *>(&outputSample),
               sizeof(outputSample));
+    pollBootHold();
   }
+  return enterEarCal;
 }
 
 
@@ -125,9 +151,19 @@ static void updateNeoPixelVu() {
   ledPeak = 0;
 
   // Hue = track color + pattern nudge; brightness = loudness.
-  const uint8_t trackHue = static_cast<uint8_t>(
-      tracker.selectedTrack * 64 + tracker.currentPattern * 8);
-  leds[0] = CHSV(trackHue, 255, ledBrightness);
+  // In ear-cal, hue marks lo (green) vs hi (orange) instead of track.
+  uint8_t hue;
+  uint8_t brightness = ledBrightness;
+  if (earCalActive) {
+    hue = static_cast<uint8_t>(earCal.phase() == EarCalPhase::Lo ? 96 : 32);
+    if (brightness < 80) {
+      brightness = 80;
+    }
+  } else {
+    hue = static_cast<uint8_t>(tracker.selectedTrack * 64 +
+                               tracker.currentPattern * 8);
+  }
+  leds[0] = CHSV(hue, 255, brightness);
   FastLED.show();
 
   tracker.voicePeak[0] = tracker.voicePeak[1] = tracker.voicePeak[2] =
@@ -160,11 +196,28 @@ void setup() {
     }
   }
 
-  playBootJingle();
+  earCalActive = playBootJingle();
+  if (earCalActive) {
+    earCal.begin(PIN_LED_A, PIN_LED_B, PIN_LED_C, PIN_LED_D);
+  }
   // tracker.LoadDemoSong();  // boot with the demo loop playing
 }
 
 void loop() {
+  if (earCalActive) {
+    earCal.poll(keypad);
+    const int16_t outputSample = earCal.nextSample();
+    I2S.write(reinterpret_cast<const uint8_t *>(&outputSample),
+              sizeof(outputSample));
+    const int level = abs(outputSample);
+    if (level > ledPeak) {
+      ledPeak = level;
+    }
+    earCal.updatePhaseLeds();
+    updateNeoPixelVu();
+    return;
+  }
+
   inputManager.UpdateInput(keypad.getKey());
 
   if (inputManager.ledCommand != LedCommand::None) {

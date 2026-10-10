@@ -283,6 +283,37 @@ These are **bench / ear** starting points for cheap portable drivers in the 10�
 
 **Wattage vs the digital knobs:** `TARGET_WRMS` / `PEAK_CAP` do **not** encode 0.5 W vs 1 W. Wattage only tells you whether the MAX98357A (≈0.8 W @ 3.3 V, ≈1.8 W @ 5 V into 8 Ω) can cook the coil. For most of these speakers the firmware limiter / `kMasterDiv` is the safety net—especially on USB 5 V with a 0.5 W keychain driver.
 
+### Ear grid (keypad map → `SPEAKER_BAND_HZ`)
+
+When you do not have a datasheet curve, use the on-device ear-calibration mode, then set `SPEAKER_BAND_HZ` by hand.
+
+1. **Hold F4** while powering on / through the startup sound (~0.5 s continuous). LED **A** lights → you are picking **lo**.
+2. Tap keys to hear pure tones at that cell’s frequency (generated on the device). Compare neighbors.
+3. **Long-press F4** (~0.7 s) to switch to **hi** (LED **B**). Tap keys again; note both silkscreen labels (e.g. lo **F**, hi **A#**).
+4. **Reboot** (power cycle) to leave cal mode. Look up the Hz values in the grids below, set `SPEAKER_BAND_HZ = (lo, hi)` in `tools/samplelib.py`, then run the swap checklist.
+
+Layout matches the membrane silkscreen (`docs/InstA.png`) and [`EarGrid.h`](EarGrid.h): frequency rises toward **F4** (low-left **C** is the bottom of each grid). Find where the speaker goes from *inaudible / soft* to *usable* → **lo**; from *usable* to *harsh / buzz* → **hi**.
+
+**lo** (Hz) — usable low edge
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| **F1**<br>530 | **F2**<br>610 | **F3**<br>700 | **F4**<br>800 |
+| **G#**<br>300 | **A**<br>350 | **A#**<br>400 | **B**<br>460 |
+| **E**<br>175 | **F**<br>200 | **F#**<br>230 | **G**<br>260 |
+| **C**<br>100 | **C#**<br>115 | **D**<br>130 | **D#**<br>150 |
+
+**hi** (Hz) — before breakup / nasty treble
+
+| | | | |
+| :---: | :---: | :---: | :---: |
+| **F1**<br>9000 | **F2**<br>9600 | **F3**<br>10300 | **F4**<br>11000 |
+| **G#**<br>6900 | **A**<br>7300 | **A#**<br>7900 | **B**<br>8400 |
+| **E**<br>5200 | **F**<br>5600 | **F#**<br>6000 | **G**<br>6400 |
+| **C**<br>4000 | **C#**<br>4300 | **D**<br>4600 | **D#**<br>4900 |
+
+Example: lo on **F** (200) and hi on **A#** (7900) → `SPEAKER_BAND_HZ = (200, 7900)`. Neighbors are close on purpose—step one key and regen if the first guess is thin or fizzy. Prefer `python tools/band_from_curve.py` when you *do* have a response/THD curve.
+
 ### Swap checklist
 
 1. `tools/samplelib.py` — `SPEAKER_BAND_HZ` (and `BAND_ORDER` only if you care); leave `TARGET_WRMS`/`PEAK_CAP` unless you intend to change the digital contract.
