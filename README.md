@@ -151,7 +151,7 @@ The samples in `Samples/*.h` are **generated build artifacts — never edit them
 1. `Samples_src/*.wav` — pristine sources of truth: the upstream numbers extracted verbatim from the original headers **once** (raw signed 16-bit PCM at 22 050 Hz), frozen afterwards.
 2. `tools/loops.py` derives everything from the pristine wavs on each run (idempotent, can never compound): optional octave register shift (`REGISTER_SHIFT`), optional saturation (`SATURATE`, off by default), attack skip, longest-first loop-seam search, micro-crossfade.
 3. `gen_headers.py` writes `Samples/*.h` plus `SampleGains.h` — per-voice loudness gains normalized to the speaker's radiated band (tunables in `samplelib.py`).
-4. Two byte-exact C++ gates prove both directions (`verify`: pristine wavs vs upstream headers; `verifygen`: generated headers vs their PCM).
+4. `gen_all.sh` runs a byte-exact C++ `verifygen` gate (generated headers vs their PCM). A separate manual `verify` (pristine wavs vs upstream headers) is only for upstream import sync, not the normal regen path.
 
 Regenerate with one command: `sh tools/gen_all.sh`. To add or replace a sample, drop the WAV into `Samples_src/` and re-run. Samples live in program memory (the factory app partition has room for the full set).
 

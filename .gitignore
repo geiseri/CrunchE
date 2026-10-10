@@ -15,3 +15,5 @@ Samples/pre_loop_backup/
 # GitHub Pages artifact worktree (release.sh)
 .gh-pages/
 dist/
+__pycache__/
+ccm_analysis.csv 

@@ -1,20 +1,21 @@
 // C++ sample pipeline VERIFICATION gates. The DSP itself lives in Python
-// on proven libraries: import_pristine.py (stdlib) dumps git HEAD headers
-// verbatim into Samples_src/*.wav, and loops.py (numpy) applies the fixups
-// (+12 shift, tier-2 saturation, seam loop prep) to Samples_src/loops/*.wav.
+// on proven libraries: loops.py (numpy) applies fixups (+12 shift, tier-2
+// saturation, seam loop prep) to Samples_src/loops/*.wav; gen_headers.py
+// writes Samples/*.h. Samples_src/*.wav are the frozen reference PCM.
 //
-//   make_samples verify   re-read every Samples_src wav, compare byte-exact
-//                         to the compiled HEAD headers (the pristine gate:
-//                         catches any mis-parse by import_pristine.py)
-//   make_samples verifygen  [second binary, workspace include order] the
-//                         GENERATED Samples/*.h must byte-equal the PCM they
-//                         were written from (loops wav, else pristine wav).
-//                         Proves the wav -> header direction natively, so
-//                         Python never needs trust: it only formats.
+//   make_samples verify     MANUAL only: after an upstream header -> wav
+//                           import, compare Samples_src to those headers.
+//                           Requires -DMAKE_SAMPLES_GATE=PRISTINE and an
+//                           -I that resolves Samples/*.h to the upstream
+//                           dump (not generated workspace headers).
+//                           Not run by tools/gen_all.sh.
+//   make_samples verifygen  GENERATED Samples/*.h must byte-equal the PCM
+//                           they were written from (loops wav, else
+//                           Samples_src). Requires -DMAKE_SAMPLES_GATE=GENERATED
+//                           (tools/gen_all.sh builds this).
 //
-// The compiler's own view of the header numbers is ground truth in both
-// directions; re-running the pipeline is idempotent because fixups derive
-// only from the frozen pristine wavs.
+// Fixups always derive from frozen Samples_src, so re-running gen_all.sh
+// cannot compound across passes.
 #include "AudioConfig.h"
 
 #include <cstdint>
@@ -73,10 +74,19 @@
 namespace {
 
 constexpr int kRate = static_cast<int>(kAudioSampleRate);
+constexpr uint32_t kMaxDataBytes = 50u * 1024u * 1024u;
+
+#define MAKE_SAMPLES_STRINGIFY(x) #x
+#define MAKE_SAMPLES_XSTRINGIFY(x) MAKE_SAMPLES_STRINGIFY(x)
+#if defined(MAKE_SAMPLES_GATE)
+constexpr const char *kMakeSamplesGate = MAKE_SAMPLES_XSTRINGIFY(MAKE_SAMPLES_GATE);
+#else
+constexpr const char *kMakeSamplesGate = "";
+#endif
 
 struct Sample {
-  const char* name;
-  const int* data;
+  const char *name;
+  const int *data;
   int len;
   bool melodic;  // loop-prepped (sustained playback) vs one-shot
 };
@@ -136,117 +146,221 @@ const Sample kSamples[] = {
 // entries (jbass*, bongo1, kick3) keep their register and are not shifted.
 // (The shift/saturation/seam implementation moved to loops.py on numpy.)
 
-std::vector<int> readWavRaw(const std::string& path, int* rate) {
-  std::vector<int> out;
-  FILE* file = std::fopen(path.c_str(), "rb");
-  if (!file) return out;
+struct WavReadResult {
+  std::vector<int> pcm;
+  int rate = 0;
+  std::string error;
+};
+
+WavReadResult readWavRaw(const std::string &path) {
+  WavReadResult result;
+  FILE *file = std::fopen(path.c_str(), "rb");
+  if (!file) {
+    result.error = "open failed";
+    return result;
+  }
+
+  auto fail = [&](const char *message) {
+    result.pcm.clear();
+    result.rate = 0;
+    result.error = message;
+    std::fclose(file);
+    return result;
+  };
+
   char riff[4];
-  std::fread(riff, 1, 4, file);
-  if (std::memcmp(riff, "RIFF", 4) != 0) { std::fclose(file); return out; }
+  if (std::fread(riff, 1, 4, file) != 4 || std::memcmp(riff, "RIFF", 4) != 0) {
+    return fail("not RIFF");
+  }
   std::fseek(file, 4, SEEK_CUR);  // RIFF chunk size
   char wave[4];
   if (std::fread(wave, 1, 4, file) != 4 || std::memcmp(wave, "WAVE", 4) != 0) {
-    std::fclose(file);
-    return out;
+    return fail("not WAVE");
   }
-  // Walk chunks; keep fmt channel/rate + data frames.
-  int channels = 0, fileRate = 0, bits = 0;
+
+  int channels = 0;
+  int fileRate = 0;
+  int bits = 0;
+  uint16_t fmtTag = 0;
+  bool sawFmt = false;
   std::vector<int16_t> pcm;
-  while (std::feof(file) == 0) {
+
+  while (true) {
     char id[4];
     uint32_t size = 0;
-    if (std::fread(id, 1, 4, file) != 4 || std::fread(&size, 4, 1, file) != 1) break;
-    const long next = std::ftell(file) + size;
-    if (std::memcmp(id, "fmt ", 4) == 0) {
-      uint16_t fmtTag = 0, ch = 0, bitDepth = 0;
-      uint32_t sr = 0;
-      std::fread(&fmtTag, 2, 1, file); std::fread(&ch, 2, 1, file);
-      std::fread(&sr, 4, 1, file);
-      std::fseek(file, 6, SEEK_CUR);  // byteRate + blockAlign
-      std::fread(&bitDepth, 2, 1, file);
-      channels = ch; fileRate = sr; bits = bitDepth;
-    } else if (std::memcmp(id, "data", 4) == 0) {
-      pcm.resize(size / 2);
-      std::fread(pcm.data(), 1, size, file);
+    if (std::fread(id, 1, 4, file) != 4 || std::fread(&size, 4, 1, file) != 1) {
+      break;
     }
-    std::fseek(file, next, SEEK_SET);
+    const long dataStart = std::ftell(file);
+    if (dataStart < 0) {
+      return fail("ftell failed");
+    }
+    // WAV chunk payloads are padded to an even byte count.
+    const long next =
+        dataStart + static_cast<long>(size) + static_cast<long>(size & 1u);
+
+    if (std::memcmp(id, "fmt ", 4) == 0) {
+      if (size < 16) {
+        return fail("fmt chunk too small");
+      }
+      uint16_t ch = 0;
+      uint16_t bitDepth = 0;
+      uint32_t sr = 0;
+      if (std::fread(&fmtTag, 2, 1, file) != 1 ||
+          std::fread(&ch, 2, 1, file) != 1 ||
+          std::fread(&sr, 4, 1, file) != 1) {
+        return fail("fmt read failed");
+      }
+      std::fseek(file, 6, SEEK_CUR);  // byteRate + blockAlign
+      if (std::fread(&bitDepth, 2, 1, file) != 1) {
+        return fail("fmt bits read failed");
+      }
+      channels = ch;
+      fileRate = static_cast<int>(sr);
+      bits = bitDepth;
+      sawFmt = true;
+    } else if (std::memcmp(id, "data", 4) == 0) {
+      if (size == 0) {
+        return fail("empty data chunk");
+      }
+      if (size > kMaxDataBytes) {
+        return fail("data chunk too large");
+      }
+      if ((size & 1u) != 0) {
+        return fail("odd data size (expected 16-bit frames)");
+      }
+      pcm.resize(size / 2);
+      const size_t got = std::fread(pcm.data(), 1, size, file);
+      if (got != size) {
+        return fail("short data read");
+      }
+    }
+
+    if (std::fseek(file, next, SEEK_SET) != 0) {
+      return fail("chunk seek failed");
+    }
   }
   std::fclose(file);
-  if (rate) *rate = fileRate;
-  out.reserve(pcm.size());
-  (void)bits; (void)channels;
-  for (int16_t sampleValue : pcm) out.push_back(sampleValue);
-  return out;
+
+  if (!sawFmt) {
+    result.error = "missing fmt chunk";
+    return result;
+  }
+  if (fmtTag != 1) {
+    result.error = "not PCM (fmtTag != 1)";
+    return result;
+  }
+  if (channels != 1) {
+    result.error = "not mono";
+    return result;
+  }
+  if (bits != 16) {
+    result.error = "not 16-bit";
+    return result;
+  }
+  if (fileRate != kRate) {
+    result.error = "wrong sample rate";
+    return result;
+  }
+  if (pcm.empty()) {
+    result.error = "missing data chunk";
+    return result;
+  }
+
+  result.rate = fileRate;
+  result.pcm.reserve(pcm.size());
+  for (int16_t sampleValue : pcm) {
+    result.pcm.push_back(sampleValue);
+  }
+  return result;
+}
+
+// Returns true on match. On failure prints one line and returns false.
+bool compareSample(const Sample &sample, const WavReadResult &wav,
+                   const char *modeLabel, const char *wavPath) {
+  if (!wav.error.empty()) {
+    std::printf("%-10s %s FAIL vs %s (%s)\n", sample.name, modeLabel, wavPath,
+                wav.error.c_str());
+    return false;
+  }
+  if (wav.rate != kRate || static_cast<int>(wav.pcm.size()) != sample.len) {
+    std::printf("%-10s %s FAIL vs %s (len/rate got rate=%d len=%d want %d)\n",
+                sample.name, modeLabel, wavPath, wav.rate,
+                static_cast<int>(wav.pcm.size()), sample.len);
+    return false;
+  }
+  for (int index = 0; index < sample.len; ++index) {
+    if (wav.pcm[index] != sample.data[index]) {
+      std::printf("%-10s %s FAIL vs %s (sample@%d)\n", sample.name, modeLabel,
+                  wavPath, index);
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   const std::string mode = argc > 1 ? argv[1] : "verify";
-  int issues = 0;
+
   if (mode == "verify") {
-    for (const Sample& sample : kSamples) {
-      int rate = 0;
-      const auto vals =
-          readWavRaw(std::string("Samples_src/") + sample.name + ".wav", &rate);
-      int mismatch = 0;
-      if (rate != kRate || static_cast<int>(vals.size()) != sample.len) {
-        mismatch = -1;
-      } else {
-        for (int index = 0; index < sample.len && !mismatch; ++index)
-          if (vals[index] != sample.data[index]) mismatch = index + 1;
-      }
-      if (mismatch) {
-        std::printf("%-10s VERIFY FAIL (len/rate or sample@%d)\n", sample.name,
-                    -mismatch);
+    if (std::strcmp(kMakeSamplesGate, "PRISTINE") != 0) {
+      std::printf(
+          "verify requires -DMAKE_SAMPLES_GATE=PRISTINE and -I pointing at "
+          "upstream headers (manual after import_pristine; not gen_all.sh)\n");
+      return 2;
+    }
+    int issues = 0;
+    for (const Sample &sample : kSamples) {
+      const std::string path =
+          std::string("Samples_src/") + sample.name + ".wav";
+      const WavReadResult wav = readWavRaw(path);
+      if (!compareSample(sample, wav, "VERIFY", path.c_str())) {
         ++issues;
       }
     }
     if (issues) {
       std::printf("verify: %d FAILURES\n", issues);
-    } else {
-      std::printf("verify: all %u wavs byte-exact vs headers\n",
-                  static_cast<unsigned>(std::size(kSamples)));
+      return 1;
     }
-    if (issues) return 1;
-  } else if (mode == "verifygen") {
-    // kSamples here holds the GENERATED values (this binary is compiled with
-    // the workspace -I first). Each header must byte-equal the wav gen_headers
-    // wrote it from: loops/<name>.wav when it exists, else <name>.wav.
+    std::printf("verify: all %u wavs byte-exact vs headers\n",
+                static_cast<unsigned>(std::size(kSamples)));
+    return 0;
+  }
+
+  if (mode == "verifygen") {
+    if (std::strcmp(kMakeSamplesGate, "GENERATED") != 0) {
+      std::printf(
+          "verifygen requires -DMAKE_SAMPLES_GATE=GENERATED and workspace "
+          "-I order (build via tools/gen_all.sh)\n");
+      return 2;
+    }
+    int issues = 0;
     int checked = 0;
-    for (const Sample& sample : kSamples) {
+    for (const Sample &sample : kSamples) {
       const std::string loopPath =
           std::string("Samples_src/loops/") + sample.name + ".wav";
       std::string use = loopPath;
       std::error_code ec;
-      if (!std::filesystem::exists(loopPath, ec))
+      if (!std::filesystem::exists(loopPath, ec)) {
         use = std::string("Samples_src/") + sample.name + ".wav";
-      int rate = 0;
-      const auto vals = readWavRaw(use, &rate);
-      int mismatch = 0;
-      if (rate != kRate || static_cast<int>(vals.size()) != sample.len) {
-        mismatch = -1;
-      } else {
-        for (int index = 0; index < sample.len && !mismatch; ++index)
-          if (vals[index] != sample.data[index]) mismatch = index + 1;
       }
-      if (mismatch) {
-        std::printf("%-10s VERIFYGEN FAIL vs %s (len/rate or sample@%d)\n",
-                    sample.name, use.c_str(),
-                    mismatch == -1 ? -1 : mismatch - 1);
+      const WavReadResult wav = readWavRaw(use);
+      if (!compareSample(sample, wav, "VERIFYGEN", use.c_str())) {
         ++issues;
       }
       ++checked;
     }
     if (issues) {
       std::printf("verifygen: %d FAILURES of %d checked\n", issues, checked);
-    } else {
-      std::printf("verifygen: all %d generated headers byte-exact vs PCM\n", checked);
+      return 1;
     }
-    if (issues) return 1;
-  } else {
-    std::printf("usage: make_samples verify|verifygen\n");
-    return 2;
+    std::printf("verifygen: all %d generated headers byte-exact vs PCM\n",
+                checked);
+    return 0;
   }
-  return issues ? 1 : 0;
+
+  std::printf("usage: make_samples verify|verifygen\n");
+  return 2;
 }
