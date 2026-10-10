@@ -54,7 +54,7 @@ void renderSweep(const std::string& path, int instrument) {
       voice.SetEnvelopeNum(2);         // sustain gate: constant level while held
       voice.SetEnvelopeLength(300000); // ~1.3 s, longer than any segment
       voice.SetNote(note, false, octave, instrument);
-      for (int i = 0; i < kSegSamples; ++i) {
+      for (int frame = 0; frame < kSegSamples; ++frame) {
         wav.push_back(StageMasterSample(voice.UpdateVoice(), 1));
       }
       wav.insert(wav.end(), kGapShort, 0);
@@ -80,19 +80,19 @@ struct ExtraSample {
   std::span<const int> data;
 };
 
-void renderExtra(const std::string& path, const ExtraSample& s) {
+void renderExtra(const std::string& path, const ExtraSample& extra) {
   double sumSq = 0;
   int peak = 0;
-  for (int v : s.data) {
-    peak = std::max(peak, std::abs(v));
-    sumSq += static_cast<double>(v) * v;
+  for (int sampleValue : extra.data) {
+    peak = std::max(peak, std::abs(sampleValue));
+    sumSq += static_cast<double>(sampleValue) * sampleValue;
   }
-  const double rms = std::sqrt(sumSq / s.data.size());
+  const double rms = std::sqrt(sumSq / extra.data.size());
   const float gain = static_cast<float>(
       std::min(3400.0 / (rms > 1.0 ? rms : 1.0), peak ? 9000.0 / peak : 1.0));
 
   std::vector<int16_t> wav;
-  const int len = static_cast<int>(s.data.size());
+  const int length = static_cast<int>(extra.data.size());
   for (int octave = 0; octave <= 3; ++octave) {
     if (octave > 0) {
       wav.insert(wav.end(), kGapOctave, 0);
@@ -100,13 +100,14 @@ void renderExtra(const std::string& path, const ExtraSample& s) {
     for (int note = 0; note < 12; ++note) {
       const float ratio = std::pow(2.0f, (note + octave * 12) / 12.0f);
       float idx = 0.0f;
-      for (int i = 0; i < kSegSamples; ++i) {
+      for (int frame = 0; frame < kSegSamples; ++frame) {
         const int i0 = static_cast<int>(idx);
-        const int i1 = (i0 + 1 >= len) ? 0 : i0 + 1;
+        const int i1 = (i0 + 1 >= length) ? 0 : i0 + 1;
         const double frac = idx - i0;
-        const int v = static_cast<int>((s.data[i0] + frac * (s.data[i1] - s.data[i0])) * gain);
-        wav.push_back(StageMasterSample(v, 1));
-        idx = std::fmod(idx + ratio, static_cast<float>(len));
+        const int sampleValue = static_cast<int>(
+            (extra.data[i0] + frac * (extra.data[i1] - extra.data[i0])) * gain);
+        wav.push_back(StageMasterSample(sampleValue, 1));
+        idx = std::fmod(idx + ratio, static_cast<float>(length));
       }
       wav.insert(wav.end(), kGapShort, 0);
     }
@@ -128,11 +129,11 @@ int main() {
                            // instrument bank 1 (F4+D, then F1+note)
                            "bass2", "guitar1", "jlead3", "jlead4", "kick3",
                            "pad2", "snareB3", "synth1", "synth3"};
-  for (int i = 0; i < 19; ++i) {
+  for (int index = 0; index < 19; ++index) {
     // Instrument index = voiceNum for the melodic table (2..11).
-    renderSweep("tests/native/sweeps/melodic" + std::to_string(i + 2) + "_" +
-                    melodic[i] + ".wav",
-                i + 2);
+    renderSweep("tests/native/sweeps/melodic" + std::to_string(index + 2) + "_" +
+                    melodic[index] + ".wav",
+                index + 2);
   }
   renderSweep("tests/native/sweeps/drums_all12.wav", 0);
   renderSweep("tests/native/sweeps/sfx_all12.wav", 1);
@@ -141,9 +142,11 @@ int main() {
       {"pureSin", {pureSin, static_cast<size_t>(pureSinLength)}},
       {"pureTriSoft", {pureTriSoft, static_cast<size_t>(pureTriSoftLength)}},
   };
-  for (const auto& s : extras) {
-    renderExtra(std::string("tests/native/sweeps/extra_") + s.name + ".wav", s);
+  for (const auto& extra : extras) {
+    renderExtra(std::string("tests/native/sweeps/extra_") + extra.name + ".wav",
+                extra);
   }
-  std::printf("done: %d files in tests/native/sweeps/\n", 19 + 2 + static_cast<int>(std::size(extras)));
+  std::printf("done: %d files in tests/native/sweeps/\n",
+              19 + 2 + static_cast<int>(std::size(extras)));
   return 0;
 }

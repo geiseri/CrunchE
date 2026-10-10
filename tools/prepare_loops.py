@@ -37,16 +37,18 @@ MELODIC = [
 
 def load_array(path):
     txt = path.read_text()
-    m = re.search(r"const int (\w+)\[\] = \{(.*)\};", txt, re.S)
-    body = m.group(2).split("}")[0]
-    vals = [int(v) for v in re.split(r"[^\d-]+", body) if v and v != "-"]
+    match = re.search(r"const int (\w+)\[\] = \{(.*)\};", txt, re.S)
+    body = match.group(2).split("}")[0]
+    vals = [int(sampleValue) for sampleValue in re.split(r"[^\d-]+", body)
+            if sampleValue and sampleValue != "-"]
     guard = re.search(r"#ifndef (\w+)", txt).group(1)
     return vals, guard
 
 
 def store_array(path, name, guard, vals):
     body = ",\n".join(
-        ",".join(str(v) for v in vals[i:i + 12]) for i in range(0, len(vals), 12)
+        ",".join(str(sampleValue) for sampleValue in vals[index:index + 12])
+        for index in range(0, len(vals), 12)
     )
     path.write_text(
         f"#ifndef {guard}\n#define {guard}\nconst int {name}[] = {{\n{body},\n}};\n"
@@ -56,36 +58,37 @@ def store_array(path, name, guard, vals):
 
 def best_period(seg):
     """Normalized autocorrelation on the decimated sustain window."""
-    m = len(seg)
-    e0 = sum(v * v for v in seg) or 1
+    length = len(seg)
+    energy0 = sum(sampleValue * sampleValue for sampleValue in seg) or 1
     best_score, best_lag = 0.0, 0
-    for lag in range(12, min(300, m // 3)):  # ~18 Hz .. 460 Hz at DECIM=4
-        num = sum(seg[i] * seg[i + lag] for i in range(m - lag))
-        etail = sum(v * v for v in seg[lag:]) or 1
-        score = num / math.sqrt(e0 * etail)
+    for lag in range(12, min(300, length // 3)):  # ~18 Hz .. 460 Hz at DECIM=4
+        num = sum(seg[index] * seg[index + lag] for index in range(length - lag))
+        etail = sum(sampleValue * sampleValue for sampleValue in seg[lag:]) or 1
+        score = num / math.sqrt(energy0 * etail)
         if score > best_score:
             best_score, best_lag = score, lag
     return best_lag * DECIM, best_score
 
 
 def process(name, dry):
+   
     path = pathlib.Path(f"Samples/{name}.h")
     data, guard = load_array(path)
-    n = len(data)
+    length = len(data)
     # CrunchE samples are short by design (0.12-0.4 s); the practical floor
     # is "at least ~4 pitch periods of sustain", checked after detection.
-    if n < RATE // 12:  # < ~83 ms: nothing to loop
-        return name, f"SKIP(short {n})"
+    if length < RATE // 12:  # < ~83 ms: nothing to loop
+        return name, f"SKIP(short {length})"
 
-    a0 = int(n * 0.10)
+    a0 = int(length * 0.10)
     seg = data[a0:][::DECIM]
-    P, score = best_period(seg)
-    if P == 0 or score < 0.5:
-        return name, f"SKIP(noise-like {n}smp acf={score:.2f})"
+    period, score = best_period(seg)
+    if period == 0 or score < 0.5:
+        return name, f"SKIP(noise-like {length}smp acf={score:.2f})"
 
-    avail = n - a0
-    if avail < 4 * P:
-        return name, f"SKIP(too few periods {avail}smp P={P})"
+    avail = length - a0
+    if avail < 4 * period:
+        return name, f"SKIP(too few periods {avail}smp P={period})"
 
     # Scan every candidate loop end in the sustain region (not a window
     # around a target length): seam smoothness is what matters, and the
@@ -94,16 +97,17 @@ def process(name, dry):
     inc = data[a0 + 1] - data[a0]
     half = seg[: len(seg) // 2]
     rms_scale = max(
-        math.sqrt(sum(v * v for v in half) / max(len(half), 1)), 1.0
+        math.sqrt(sum(sampleValue * sampleValue for sampleValue in half)
+                  / max(len(half), 1)), 1.0
     )
     best_cost, best_L = None, 0
-    for L in range(4 * P, avail):
-        if a0 + L + 1 >= n:
+    for loopLength in range(4 * period, avail):
+        if a0 + loopLength + 1 >= length:
             break
-        cost = (abs(data[a0 + L] - data[a0])
-                + abs(data[a0 + L] - data[a0 + L - 1] - inc)) / rms_scale
+        cost = (abs(data[a0 + loopLength] - data[a0])
+                + abs(data[a0 + loopLength] - data[a0 + loopLength - 1] - inc)) / rms_scale
         if best_cost is None or cost < best_cost * 0.9:
-            best_cost, best_L = cost, L
+            best_cost, best_L = cost, loopLength
 
     if best_cost is None or best_cost > 0.30:
         return name, f"SKIP(no smooth seam best cost={best_cost})"
@@ -111,9 +115,10 @@ def process(name, dry):
     loop = data[a0:a0 + best_L]
     CF = max(4, min(24, best_L // 16))
     tail = list(loop[-CF:])
-    for j in range(CF):
-        w = (j + 1) / CF
-        loop[len(loop) - CF + j] = int(round((1 - w) * tail[j] + w * loop[j]))
+    for fadeIndex in range(CF):
+        weight = (fadeIndex + 1) / CF
+        loop[len(loop) - CF + fadeIndex] = int(round(
+            (1 - weight) * tail[fadeIndex] + weight * loop[fadeIndex]))
 
     if not dry:
         bak = pathlib.Path("Samples/pre_loop_backup")
@@ -122,17 +127,17 @@ def process(name, dry):
             (bak / f"{name}.h").write_text(path.read_text())
         store_array(path, name, guard, loop)
     return name, (
-        f"OK P={P} loop={best_L} ({best_L / RATE:.2f}s) "
+        f"OK P={period} loop={best_L} ({best_L / RATE:.2f}s) "
         f"cost={best_cost:.3f} acf={score:.2f}"
     )
 
 
 def main():
-    args = [x for x in sys.argv[1:] if not x.startswith("--")]
+    args = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
     dry = "--dry-run" in sys.argv
     for name in (args or MELODIC):
-        r = process(name, dry)
-        print(f"{name:10s} {r[1]}" + ("   [dry-run]" if dry else ""))
+        result = process(name, dry)
+        print(f"{name:10s} {result[1]}" + ("   [dry-run]" if dry else ""))
 
 
 if __name__ == "__main__":

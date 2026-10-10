@@ -49,7 +49,7 @@ private:
   // No trigger for a full on+off cycle -> the voice stopped replaying.
   static constexpr unsigned long kBlinkIdleMs = kBlinkOnMs + kBlinkOffMs + 100;
 
-  void writePin(int i, int level);
+  void writePin(int ledIndex, int level);
   // Restore GPIOs from blink[] / metronome after arm hold ends.
   void resyncPins();
 };

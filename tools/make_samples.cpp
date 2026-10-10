@@ -138,44 +138,44 @@ const Sample kSamples[] = {
 
 std::vector<int> readWavRaw(const std::string& path, int* rate) {
   std::vector<int> out;
-  FILE* f = std::fopen(path.c_str(), "rb");
-  if (!f) return out;
+  FILE* file = std::fopen(path.c_str(), "rb");
+  if (!file) return out;
   char riff[4];
-  std::fread(riff, 1, 4, f);
-  if (std::memcmp(riff, "RIFF", 4) != 0) { std::fclose(f); return out; }
-  std::fseek(f, 4, SEEK_CUR);  // RIFF chunk size
+  std::fread(riff, 1, 4, file);
+  if (std::memcmp(riff, "RIFF", 4) != 0) { std::fclose(file); return out; }
+  std::fseek(file, 4, SEEK_CUR);  // RIFF chunk size
   char wave[4];
-  if (std::fread(wave, 1, 4, f) != 4 || std::memcmp(wave, "WAVE", 4) != 0) {
-    std::fclose(f);
+  if (std::fread(wave, 1, 4, file) != 4 || std::memcmp(wave, "WAVE", 4) != 0) {
+    std::fclose(file);
     return out;
   }
   // Walk chunks; keep fmt channel/rate + data frames.
   int channels = 0, fileRate = 0, bits = 0;
   std::vector<int16_t> pcm;
-  while (std::feof(f) == 0) {
+  while (std::feof(file) == 0) {
     char id[4];
     uint32_t size = 0;
-    if (std::fread(id, 1, 4, f) != 4 || std::fread(&size, 4, 1, f) != 1) break;
-    const long next = std::ftell(f) + size;
+    if (std::fread(id, 1, 4, file) != 4 || std::fread(&size, 4, 1, file) != 1) break;
+    const long next = std::ftell(file) + size;
     if (std::memcmp(id, "fmt ", 4) == 0) {
-      uint16_t fmtTag = 0, ch = 0, b = 0;
+      uint16_t fmtTag = 0, ch = 0, bitDepth = 0;
       uint32_t sr = 0;
-      std::fread(&fmtTag, 2, 1, f); std::fread(&ch, 2, 1, f);
-      std::fread(&sr, 4, 1, f);
-      std::fseek(f, 6, SEEK_CUR);  // byteRate + blockAlign
-      std::fread(&b, 2, 1, f);
-      channels = ch; fileRate = sr; bits = b;
+      std::fread(&fmtTag, 2, 1, file); std::fread(&ch, 2, 1, file);
+      std::fread(&sr, 4, 1, file);
+      std::fseek(file, 6, SEEK_CUR);  // byteRate + blockAlign
+      std::fread(&bitDepth, 2, 1, file);
+      channels = ch; fileRate = sr; bits = bitDepth;
     } else if (std::memcmp(id, "data", 4) == 0) {
       pcm.resize(size / 2);
-      std::fread(pcm.data(), 1, size, f);
+      std::fread(pcm.data(), 1, size, file);
     }
-    std::fseek(f, next, SEEK_SET);
+    std::fseek(file, next, SEEK_SET);
   }
-  std::fclose(f);
+  std::fclose(file);
   if (rate) *rate = fileRate;
   out.reserve(pcm.size());
   (void)bits; (void)channels;
-  for (int16_t v : pcm) out.push_back(v);
+  for (int16_t sampleValue : pcm) out.push_back(sampleValue);
   return out;
 }
 
@@ -185,17 +185,20 @@ int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "verify";
   int issues = 0;
   if (mode == "verify") {
-    for (const Sample& s : kSamples) {
+    for (const Sample& sample : kSamples) {
       int rate = 0;
-      const auto vals = readWavRaw(std::string("Samples_src/") + s.name + ".wav", &rate);
+      const auto vals =
+          readWavRaw(std::string("Samples_src/") + sample.name + ".wav", &rate);
       int mismatch = 0;
-      if (rate != kRate || static_cast<int>(vals.size()) != s.len) mismatch = -1;
-      else {
-        for (int i = 0; i < s.len && !mismatch; ++i)
-          if (vals[i] != s.data[i]) mismatch = i + 1;
+      if (rate != kRate || static_cast<int>(vals.size()) != sample.len) {
+        mismatch = -1;
+      } else {
+        for (int index = 0; index < sample.len && !mismatch; ++index)
+          if (vals[index] != sample.data[index]) mismatch = index + 1;
       }
       if (mismatch) {
-        std::printf("%-10s VERIFY FAIL (len/rate or sample@%d)\n", s.name, -mismatch);
+        std::printf("%-10s VERIFY FAIL (len/rate or sample@%d)\n", sample.name,
+                    -mismatch);
         ++issues;
       }
     }
@@ -211,24 +214,26 @@ int main(int argc, char** argv) {
     // the workspace -I first). Each header must byte-equal the wav gen_headers
     // wrote it from: loops/<name>.wav when it exists, else <name>.wav.
     int checked = 0;
-    for (const Sample& s : kSamples) {
+    for (const Sample& sample : kSamples) {
       const std::string loopPath =
-          std::string("Samples_src/loops/") + s.name + ".wav";
+          std::string("Samples_src/loops/") + sample.name + ".wav";
       std::string use = loopPath;
       std::error_code ec;
       if (!std::filesystem::exists(loopPath, ec))
-        use = std::string("Samples_src/") + s.name + ".wav";
+        use = std::string("Samples_src/") + sample.name + ".wav";
       int rate = 0;
       const auto vals = readWavRaw(use, &rate);
       int mismatch = 0;
-      if (rate != kRate || static_cast<int>(vals.size()) != s.len) mismatch = -1;
-      else {
-        for (int i = 0; i < s.len && !mismatch; ++i)
-          if (vals[i] != s.data[i]) mismatch = i + 1;
+      if (rate != kRate || static_cast<int>(vals.size()) != sample.len) {
+        mismatch = -1;
+      } else {
+        for (int index = 0; index < sample.len && !mismatch; ++index)
+          if (vals[index] != sample.data[index]) mismatch = index + 1;
       }
       if (mismatch) {
         std::printf("%-10s VERIFYGEN FAIL vs %s (len/rate or sample@%d)\n",
-                    s.name, use.c_str(), mismatch == -1 ? -1 : mismatch - 1);
+                    sample.name, use.c_str(),
+                    mismatch == -1 ? -1 : mismatch - 1);
         ++issues;
       }
       ++checked;

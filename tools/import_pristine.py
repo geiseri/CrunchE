@@ -23,22 +23,24 @@ PRISTINE_DIR = pathlib.Path(".pipeline/pristine_headers/Samples")
 
 
 def write_wav(path, vals):
-    clamped = [max(-32768, min(32767, v)) for v in vals]
-    if any(c != v for c, v in zip(clamped, vals)):
-        print(f"{path.name}: WARNING: {sum(c != v for c, v in zip(clamped, vals))}"
+    clamped = [max(-32768, min(32767, sampleValue)) for sampleValue in vals]
+    if any(clampedValue != sampleValue
+           for clampedValue, sampleValue in zip(clamped, vals)):
+        print(f"{path.name}: WARNING: "
+              f"{sum(clampedValue != sampleValue for clampedValue, sampleValue in zip(clamped, vals))}"
               f" values clamped to int16")
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(samplelib.RATE)
-        w.writeframes(memoryview(array_of(clamped)).tobytes())
+    with wave.open(str(path), "wb") as wavFile:
+        wavFile.setnchannels(1)
+        wavFile.setsampwidth(2)
+        wavFile.setframerate(samplelib.RATE)
+        wavFile.writeframes(memoryview(array_of(clamped)).tobytes())
 
 
 def array_of(vals):
     from array import array
-    a = array("h")
-    a.fromlist(vals)
-    return a
+    pcm = array("h")
+    pcm.fromlist(vals)
+    return pcm
 
 
 def main():

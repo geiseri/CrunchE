@@ -46,20 +46,22 @@ def _file_tag(path):
 
 
 def fingerprint():
-    h = hashlib.sha256()
+    hasher = hashlib.sha256()
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                               capture_output=True, text=True, check=True).stdout
-        h.update(f"git:{head.strip()}\n".encode())
+        hasher.update(f"git:{head.strip()}\n".encode())
     except Exception as exc:  # no git -> fingerprint failure, pipeline will report
-        h.update(f"git:ERROR:{exc}\n".encode())
+        hasher.update(f"git:ERROR:{exc}\n".encode())
     for rel in WATCHED_SCRIPTS:
-        p = ROOT / rel
-        h.update((f"{p}:MISSING" if not p.exists() else _file_tag(p)).encode() + b"\n")
+        watched = ROOT / rel
+        hasher.update(
+            (f"{watched}:MISSING" if not watched.exists() else _file_tag(watched)
+             ).encode() + b"\n")
     src = ROOT / "Samples_src"
     for wav in sorted(src.rglob("*.wav")) if src.is_dir() else []:
-        h.update(_file_tag(wav).encode() + b"\n")
-    return h.hexdigest()
+        hasher.update(_file_tag(wav).encode() + b"\n")
+    return hasher.hexdigest()
 
 
 def _outputs_present():

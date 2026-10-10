@@ -30,7 +30,7 @@ enum NoteKey : int8_t {
 // Function keys F1..F4. Each arms a distinct command family.
 enum FunctionKey : int8_t {
   kFuncVoice = 0,   // F1: instruments + octaves
-  kFuncTone,        // F2: arp/filter, delay, envelope, volume
+  kFuncTone,        // F2: sample FX, step-delay, envelope, volume
   kFuncPattern,     // F3: tracks, pattern select, clears
   kFuncSong,        // F4: song, transport, tempo, master trim
 };
@@ -41,8 +41,8 @@ enum class Command : char {
   Note = 'N',                  // bare C-B: record while playing / play when stopped
   Instrument = 'I',            // F1 + note
   Octave = 'O',                // F1 + F1..F4
-  Arp = 'A',                   // F2 + C..D#
-  Delay = 'D',                 // F2 + E..G
+  Arp = 'A',                   // F2 + C..D#: sample FX (EffectMode); not melodic arp
+  Delay = 'D',                 // F2 + E..G: Tracker step-delay (grid echo), not sample FX
   Envelope = 'E',              // F2 + G#..B
   Volume = 'V',                // F2 + F1..F4
   SelectTrack = 'T',           // F3 + F1..F4

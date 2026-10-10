@@ -15,13 +15,13 @@ LedManager::LedManager(int pinA, int pinB, int pinC, int pinD) {
   command = LedCommand::Applied;  // neutral: blinks allowed from boot
 }
 
-void LedManager::SetPattern(bool pPlay, int p) {
-  patternPlay = pPlay;
-  pattern = p;
+void LedManager::SetPattern(bool patternPlayEnabled, int patternIndex) {
+  patternPlay = patternPlayEnabled;
+  pattern = patternIndex;
 }
 
-void LedManager::writePin(int i, int level) {
-  switch (i) {
+void LedManager::writePin(int ledIndex, int level) {
+  switch (ledIndex) {
     case 0:
       digitalWrite(outPinA, level);
       break;
@@ -40,10 +40,11 @@ void LedManager::writePin(int i, int level) {
 }
 
 void LedManager::resyncPins() {
-  for (int i = 0; i < 4; i++) {
-    const bool blinkOn = blink[i].active && blink[i].on;
-    const bool metroOn = timeLit > 0 && i == litCol && !blink[i].active;
-    writePin(i, (blinkOn || metroOn) ? HIGH : LOW);
+  for (int ledIndex = 0; ledIndex < 4; ledIndex++) {
+    const bool blinkOn = blink[ledIndex].active && blink[ledIndex].on;
+    const bool metroOn =
+        timeLit > 0 && ledIndex == litCol && !blink[ledIndex].active;
+    writePin(ledIndex, (blinkOn || metroOn) ? HIGH : LOW);
   }
 }
 
@@ -51,8 +52,8 @@ bool LedManager::isIdle() const {
   if (timeLit > 0) {
     return false;
   }
-  for (int i = 0; i < 4; i++) {
-    if (blink[i].active) {
+  for (int ledIndex = 0; ledIndex < 4; ledIndex++) {
+    if (blink[ledIndex].active) {
       return false;
     }
   }
@@ -74,9 +75,9 @@ void LedManager::UpdateLed() {
         timeLit = 0;
         litCol = -1;
         // Retract the metronome pulse, but never fight an active slow blink.
-        for (int i = 0; i < 4; i++) {
-          if (!blink[i].active) {
-            writePin(i, LOW);
+        for (int ledIndex = 0; ledIndex < 4; ledIndex++) {
+          if (!blink[ledIndex].active) {
+            writePin(ledIndex, LOW);
           }
         }
       }
@@ -84,26 +85,26 @@ void LedManager::UpdateLed() {
 
     // Slow-blink engine: 1 s on, 0.5 s off while a voice keeps triggering;
     // a full cycle without a trigger means its notes stopped replaying.
-    for (int i = 0; i < 4; i++) {
-      VoiceBlink &b = blink[i];
-      if (!b.active) {
+    for (int ledIndex = 0; ledIndex < 4; ledIndex++) {
+      VoiceBlink &voiceBlink = blink[ledIndex];
+      if (!voiceBlink.active) {
         continue;
       }
-      if (now - b.lastTrig >= kBlinkIdleMs) {
-        b.active = false;
-        writePin(i, LOW);
+      if (now - voiceBlink.lastTrig >= kBlinkIdleMs) {
+        voiceBlink.active = false;
+        writePin(ledIndex, LOW);
         continue;
       }
-      if (b.on) {
-        if (now - b.cycleStart >= kBlinkOnMs) {
-          b.on = false;
-          b.cycleStart = now;
-          writePin(i, LOW);
+      if (voiceBlink.on) {
+        if (now - voiceBlink.cycleStart >= kBlinkOnMs) {
+          voiceBlink.on = false;
+          voiceBlink.cycleStart = now;
+          writePin(ledIndex, LOW);
         }
-      } else if (now - b.cycleStart >= kBlinkOffMs) {
-        b.on = true;
-        b.cycleStart = now;
-        writePin(i, HIGH);
+      } else if (now - voiceBlink.cycleStart >= kBlinkOffMs) {
+        voiceBlink.on = true;
+        voiceBlink.cycleStart = now;
+        writePin(ledIndex, HIGH);
       }
     }
   }  // command == Applied
@@ -197,9 +198,9 @@ void LedManager::SetLit(float time, int col) {
   }
 
   // Clear only idle pins so other tracks' slow blinks keep their phase.
-  for (int i = 0; i < 4; i++) {
-    if (!blink[i].active) {
-      writePin(i, LOW);
+  for (int ledIndex = 0; ledIndex < 4; ledIndex++) {
+    if (!blink[ledIndex].active) {
+      writePin(ledIndex, LOW);
     }
   }
   writePin(col, HIGH);
@@ -212,19 +213,19 @@ void LedManager::SetLitMask(uint8_t mask) {
     return;
   }
   const unsigned long now = millis();
-  for (int i = 0; i < 4; i++) {
-    if (!(mask & (1u << i))) {
+  for (int ledIndex = 0; ledIndex < 4; ledIndex++) {
+    if (!(mask & (1u << ledIndex))) {
       continue;
     }
-    VoiceBlink &b = blink[i];
+    VoiceBlink &voiceBlink = blink[ledIndex];
     // First trigger (or a trigger after the cycle died out) starts a fresh
     // slow blink; later triggers just extend its life in the current phase.
-    if (!b.active || now - b.lastTrig >= kBlinkIdleMs) {
-      b.active = true;
-      b.on = true;
-      b.cycleStart = now;
-      writePin(i, HIGH);
+    if (!voiceBlink.active || now - voiceBlink.lastTrig >= kBlinkIdleMs) {
+      voiceBlink.active = true;
+      voiceBlink.on = true;
+      voiceBlink.cycleStart = now;
+      writePin(ledIndex, HIGH);
     }
-    b.lastTrig = now;
+    voiceBlink.lastTrig = now;
   }
 }

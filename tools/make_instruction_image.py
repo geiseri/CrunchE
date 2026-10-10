@@ -39,14 +39,14 @@ def parse_mapper(src, name):
     body = src[sig:end]
     rows, hdr = [], None
     for line in body.splitlines():
-        m = ROW_RE.search(line)
-        if m:
-            rows.append((m.group(1), m.group(2), m.group(3)))
-        m = HDR_RE.search(line)
-        if m:
-            hdr = m.group(1).strip()
+        match = ROW_RE.search(line)
+        if match:
+            rows.append((match.group(1), match.group(2), match.group(3)))
+        match = HDR_RE.search(line)
+        if match:
+            hdr = match.group(1).strip()
     returned = set(RET_RE.findall(body))
-    documented = {r[1] for r in rows}
+    documented = {row[1] for row in rows}
     if documented != returned:
         sys.exit(f"KEYPAD-DOC out of sync in {name}: "
                  f"documented {sorted(documented)} vs returns "
@@ -91,17 +91,18 @@ def build_grids(names):
     """Return per-bank cells [(key, label)] in silkscreen display order."""
     electrical = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     bank0 = {"C": "drums", "C#": "sfx"}            # voiceNum 0/1 special cases
-    for i in range(10):                            # voiceNum 2..11
-        bank0[electrical[2 + i]] = names[i]
+    for index in range(10):                            # voiceNum 2..11
+        bank0[electrical[2 + index]] = names[index]
     bank1 = {}
-    for i in range(9):                             # voiceNum 12..20
-        bank1[electrical[i]] = names[10 + i]
-    for k in electrical[9:]:                       # voiceNum 21..23 unprovisioned
-        bank1[k] = "silent"
+    for index in range(9):                             # voiceNum 12..20
+        bank1[electrical[index]] = names[10 + index]
+    for keyChar in electrical[9:]:                       # voiceNum 21..23 unprovisioned
+        bank1[keyChar] = "silent"
     display_order = [8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3]  # G# row, E row, C row
     grids = []
     for bank in (bank0, bank1):
-        cells = [(electrical[i], bank[electrical[i]]) for i in display_order]
+        cells = [(electrical[index], bank[electrical[index]])
+                 for index in display_order]
         grids.append(cells)
     return grids
 
@@ -110,7 +111,7 @@ def build_grids(names):
 # Rendering
 # --------------------------------------------------------------------------
 
-W, H = 1000, 1560
+WIDTH, HEIGHT = 1000, 1560
 BG = (247, 246, 242)
 INK = (28, 28, 32)
 MUTED = (110, 108, 100)
@@ -143,61 +144,64 @@ F_NOTE = find_font(18)
 F_SMALL = find_font(15)
 F_BADGE = find_font(13, bold=True)
 
-img = Image.new("RGB", (W, H), BG)
-d = ImageDraw.Draw(img)
+img = Image.new("RGB", (WIDTH, HEIGHT), BG)
+draw = ImageDraw.Draw(img)
 
 
-def badge(x, y, text, w=34, fill=ACCENT, fg=(255, 255, 255)):
-    d.rounded_rectangle([x, y, x + w, y + 24], 6, fill=fill)
-    bbox = d.textbbox((0, 0), text, font=F_BADGE)
-    d.text((x + (w - (bbox[2] - bbox[0])) / 2 - bbox[0],
-            y + (24 - (bbox[3] - bbox[1])) / 2 - bbox[1]), text, font=F_BADGE, fill=fg)
+def badge(posX, posY, text, width=34, fill=ACCENT, fg=(255, 255, 255)):
+    draw.rounded_rectangle([posX, posY, posX + width, posY + 24], 6, fill=fill)
+    bbox = draw.textbbox((0, 0), text, font=F_BADGE)
+    draw.text((posX + (width - (bbox[2] - bbox[0])) / 2 - bbox[0],
+               posY + (24 - (bbox[3] - bbox[1])) / 2 - bbox[1]), text,
+              font=F_BADGE, fill=fg)
 
 
-def text(x, y, s, font=F_NOTE, fill=INK):
-    d.text((x, y), s, font=font, fill=fill)
+def text(posX, posY, content, font=F_NOTE, fill=INK):
+    draw.text((posX, posY), content, font=font, fill=fill)
 
 
-def wrapped(x, y, s, font=F_SMALL, fill=MUTED, max_w=W - 80, line_h=18):
-    words = s.split()
+def wrapped(posX, posY, content, font=F_SMALL, fill=MUTED, max_w=WIDTH - 80,
+            line_h=18):
+    words = content.split()
     line = []
-    for w in words:
-        trial = " ".join(line + [w])
-        if line and d.textlength(trial, font=font) > max_w:
-            text(x, y, " ".join(line), font=font, fill=fill)
-            y += line_h
-            line = [w]
+    for word in words:
+        trial = " ".join(line + [word])
+        if line and draw.textlength(trial, font=font) > max_w:
+            text(posX, posY, " ".join(line), font=font, fill=fill)
+            posY += line_h
+            line = [word]
         else:
             line = trial.split()
     if line:
-        text(x, y, " ".join(line), font=font, fill=fill)
-        y += line_h
-    return y
+        text(posX, posY, " ".join(line), font=font, fill=fill)
+        posY += line_h
+    return posY
 
 
-def section(fnum, header, rows, y):
-    badge(40, y + 1, "F" + fnum)
-    text(84, y, header, font=F_HEAD)
-    y += 34
+def section(fnum, header, rows, posY):
+    badge(40, posY + 1, "F" + fnum)
+    text(84, posY, header, font=F_HEAD)
+    posY += 34
     for label, _cmd, desc in rows:
-        text(84, y, label, font=F_LBL, fill=ACCENT)
-        text(214, y, desc, font=F_NOTE)
-        y += 29
-    return y + 12
+        text(84, posY, label, font=F_LBL, fill=ACCENT)
+        text(214, posY, desc, font=F_NOTE)
+        posY += 29
+    return posY + 12
 
 
-def voice_grid(y, bank, cells):
-    text(84, y, f"bank {bank}  (F1 + note):", font=F_NOTE, fill=ACCENT)
-    y += 25
-    for r in range(3):
-        for c in range(4):
-            note, name = cells[r * 4 + c]
-            x = 84 + c * 224
-            bbox = d.textbbox((0, 0), note, font=F_SMALL)
-            text(x, y, note, font=F_SMALL, fill=INK)
-            text(x + (bbox[2] - bbox[0]) + 8, y, name, font=F_SMALL, fill=MUTED)
-        y += 22
-    return y + 8
+def voice_grid(posY, bank, cells):
+    text(84, posY, f"bank {bank}  (F1 + note):", font=F_NOTE, fill=ACCENT)
+    posY += 25
+    for row in range(3):
+        for col in range(4):
+            note, name = cells[row * 4 + col]
+            posX = 84 + col * 224
+            bbox = draw.textbbox((0, 0), note, font=F_SMALL)
+            text(posX, posY, note, font=F_SMALL, fill=INK)
+            text(posX + (bbox[2] - bbox[0]) + 8, posY, name, font=F_SMALL,
+                 fill=MUTED)
+        posY += 22
+    return posY + 8
 
 
 def main():
@@ -213,42 +217,45 @@ def main():
         ["E", "F", "F#", "G"],
         ["C", "C#", "D", "D#"],
     ]
-    COLX, KW, KH, GAP = [170 + 202 * i for i in range(4)], 180, 60, 10
+    COLX, KW, KH, GAP = [170 + 202 * index for index in range(4)], 180, 60, 10
     TOP = 100
-    for i, label in enumerate(["function row", "octave row", "octave row", "base notes"]):
-        y = TOP + i * (KH + GAP)
-        text(24, y + 24, label, font=F_SMALL, fill=MUTED)
-        for j, key in enumerate(ROWS[i]):
-            x = COLX[j]
-            is_func = i == 0
-            d.rounded_rectangle([x, y, x + KW, y + KH], 10,
-                                fill=(ACCENT if is_func else KEY_BG),
-                                outline=KEY_EDGE, width=2)
-            bbox = d.textbbox((0, 0), key, font=F_KEY)
-            d.text((x + (KW - bbox[2] + bbox[0]) / 2 - bbox[0],
-                    y + (KH - bbox[3] + bbox[1]) / 2 - bbox[1]), key, font=F_KEY,
-                   fill=(255, 255, 255) if is_func else INK)
+    for index, label in enumerate(
+            ["function row", "octave row", "octave row", "base notes"]):
+        posY = TOP + index * (KH + GAP)
+        text(24, posY + 24, label, font=F_SMALL, fill=MUTED)
+        for col, key in enumerate(ROWS[index]):
+            posX = COLX[col]
+            is_func = index == 0
+            draw.rounded_rectangle([posX, posY, posX + KW, posY + KH], 10,
+                                   fill=(ACCENT if is_func else KEY_BG),
+                                   outline=KEY_EDGE, width=2)
+            bbox = draw.textbbox((0, 0), key, font=F_KEY)
+            draw.text((posX + (KW - bbox[2] + bbox[0]) / 2 - bbox[0],
+                       posY + (KH - bbox[3] + bbox[1]) / 2 - bbox[1]), key,
+                      font=F_KEY,
+                      fill=(255, 255, 255) if is_func else INK)
 
-    y = TOP + 4 * (KH + GAP) + 6
-    text(COLX[0], y, "F1-F4 arm a function (its LED stays lit); the next key applies it.",
+    posY = TOP + 4 * (KH + GAP) + 6
+    text(COLX[0], posY,
+         "F1-F4 arm a function (its LED stays lit); the next key applies it.",
          font=F_SMALL, fill=MUTED)
 
-    y = 415
-    for idx, (fnum, header, rows) in enumerate(sections):
-        y = section(fnum, header, rows, y)
+    posY = 415
+    for _idx, (fnum, header, rows) in enumerate(sections):
+        posY = section(fnum, header, rows, posY)
         if fnum == "1":  # instrument tables follow the F1 section
-            y = voice_grid(y, 0, grids[0])
-            y = voice_grid(y, 1, grids[1])
+            posY = voice_grid(posY, 0, grids[0])
+            posY = voice_grid(posY, 1, grids[1])
 
-    y = wrapped(40, y + 4,
-                "No F key held: C-B records a note into the selected track while "
-                "playing, or plays it live when stopped. Notes store the instrument "
-                "and octave held at record time. Voice names above are the sample "
-                "sources in Samples/.")
+    posY = wrapped(40, posY + 4,
+                   "No F key held: C-B records a note into the selected track while "
+                   "playing, or plays it live when stopped. Notes store the instrument "
+                   "and octave held at record time. Voice names above are the sample "
+                   "sources in Samples/.")
 
     out = pathlib.Path("docs")
     out.mkdir(exist_ok=True)
-    final = img.crop((0, 0, W, min(H, y + 68)))
+    final = img.crop((0, 0, WIDTH, min(HEIGHT, posY + 68)))
     final = final.resize((min(800, round(final.width * 0.8)),
                           round(final.height * 0.8)), Image.LANCZOS)
     final.convert("P", palette=Image.ADAPTIVE, colors=64).save(

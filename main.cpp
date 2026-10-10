@@ -70,38 +70,43 @@ static void playBootJingle() {
 
   // Let amp/SD_MODE settle before the swell so the power-on transient is silent.
   const int16_t silence = 0;
-  for (uint32_t n = 0; n < kRate * 12 / 100; n++) {  // ~120 ms
+  for (uint32_t frame = 0; frame < kRate * 12 / 100; frame++) {  // ~120 ms
     I2S.write(reinterpret_cast<const uint8_t *>(&silence), sizeof(silence));
   }
 
-  for (int i = 0; i < 4; i++) {
-    voices[i].SetVolume(1);
-    voices[i].SetEnvelopeNum(2);              // sustain shape
-    voices[i].SetEnvelopeLength(480000);      // outlives the jingle
-    voices[i].SetNote(parts[i].note, false, parts[i].octave,
-                       parts[i].instrument);
+  for (int voiceIndex = 0; voiceIndex < 4; voiceIndex++) {
+    voices[voiceIndex].SetVolume(1);
+    voices[voiceIndex].SetEnvelopeNum(2);              // sustain shape
+    voices[voiceIndex].SetEnvelopeLength(480000);      // outlives the jingle
+    voices[voiceIndex].SetNote(parts[voiceIndex].note, false,
+                               parts[voiceIndex].octave,
+                               parts[voiceIndex].instrument);
   }
 
-  for (uint32_t n = 0; n < total; n++) {
-    int mix = 0;
-    for (int i = 0; i < 4; i++) {
-      const uint32_t start = static_cast<uint32_t>(i) * stagger;
+  for (uint32_t frame = 0; frame < total; frame++) {
+    int32_t mix = 0;
+    for (int voiceIndex = 0; voiceIndex < 4; voiceIndex++) {
+      const uint32_t start = static_cast<uint32_t>(voiceIndex) * stagger;
       float env = 1.0f;
-      if (n < start) {
+      if (frame < start) {
         env = 0.0f;
-      } else if (n < start + attack) {
-        env = static_cast<float>(n - start) / attack;
+      } else if (frame < start + attack) {
+        env = static_cast<float>(frame - start) / static_cast<float>(attack);
       }
-      if (n + release > total) {
-        env *= static_cast<float>(total - n) / release;
+      if (frame + release > total) {
+        env *= static_cast<float>(total - frame) / static_cast<float>(release);
       }
-      mix += static_cast<int>(voices[i].UpdateVoice() * env * 0.5f);
+      // Float envelope stay continuous; quantize once into the mix sum.
+      const float wet =
+          static_cast<float>(voices[voiceIndex].UpdateVoice()) * env * 0.5f;
+      mix += static_cast<int32_t>(wet);
     }
     const int16_t outputSample = StageMasterSample(mix);
     I2S.write(reinterpret_cast<const uint8_t *>(&outputSample),
               sizeof(outputSample));
   }
 }
+
 
 static void updateNeoPixelVu() {
   const uint32_t now = millis();

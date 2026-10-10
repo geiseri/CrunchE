@@ -34,23 +34,23 @@ uint32_t Now() { return g_now; }
 namespace {
 
 void advanceSteps(Tracker &tr, int steps) {
-  for (int s = 0; s < steps; s++) {
+  for (int step = 0; step < steps; step++) {
     g_now += 125;
-    tr.UpdateTracker();
+    (void)tr.UpdateTracker();
   }
 }
 
-void key(InputManager &im, Tracker &tr, char k) {
-  im.UpdateInput(k);
+void key(InputManager &im, Tracker &tr, char keyChar) {
+  im.UpdateInput(keyChar);
   if (im.trackCommand != Command::None) {
     tr.SetCommand(im.trackCommand, im.trackCommandArgument);
   }
   im.EndFrame();
 }
 
-void combo(InputManager &im, Tracker &tr, char f, char k) {
-  key(im, tr, f);
-  key(im, tr, k);
+void combo(InputManager &im, Tracker &tr, char functionChar, char keyChar) {
+  key(im, tr, functionChar);
+  key(im, tr, keyChar);
 }
 
 void TestPhraseBuild() {
@@ -113,8 +113,8 @@ void TestStoppedAuditionNeverWrites() {
   combo(im, tr, 'P', 'P');  // session not open -> stop transport
   check(!tr.isPlaying, "stopped");
 
-  for (char k = 'A'; k <= 'L'; k++) {
-    key(im, tr, k);  // hammer every note key
+  for (char keyChar = 'A'; keyChar <= 'L'; keyChar++) {
+    key(im, tr, keyChar);  // hammer every note key
   }
   bool anyCell = false;
   for (int step = 0; step < 32; step++) {
@@ -145,6 +145,25 @@ void TestTrackSwitchIsolation() {
   check(tr.CellAt(0, 1) == 0, "previous track untouched by new builds");
 }
 
+void TestHybridLatchAppliesNextSample() {
+  std::printf("== Hybrid latch: step edge then next sample ==\n");
+  InputManager im;
+  Tracker tr;
+
+  key(im, tr, 'A');  // note at write cursor (step 0)
+  check(tr.CellAt(0, 0) == 1, "hybrid fixture: note stored at step 0");
+
+  g_now += 125;
+  (void)tr.UpdateTracker();  // Phase A latches; SetNote deferred
+  check(tr.lastTriggeredMask == 0,
+        "step boundary latches without applying (mask clear)");
+
+  // Same wall time: Phase B consumes the latch on the next sample frame.
+  (void)tr.UpdateTracker();
+  check((tr.lastTriggeredMask & 0x1) != 0,
+        "next UpdateTracker sample applies pending trigger");
+}
+
 }  // namespace
 
 int main() {
@@ -152,6 +171,7 @@ int main() {
   TestCellAttributes();
   TestStoppedAuditionNeverWrites();
   TestTrackSwitchIsolation();
+  TestHybridLatchAppliesNextSample();
   if (failures) {
     std::printf("RESULT: FAIL (%d)\n", failures);
     return 1;

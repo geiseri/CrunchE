@@ -39,7 +39,7 @@ const char* kNames[] = {"-", "-", "bass1", "jbass2", "pad1", "jpad1", "pad3",
                         "pad2", "snareB3", "synth1", "synth3"};
 
 struct PairResult {
-  int a, b;
+  int instrumentA, instrumentB;
   double kneePct;
   int longestRun;
   int capHits;
@@ -51,97 +51,104 @@ struct PairResult {
 // partials amplitude-modulate each other; that modulation (20-200 Hz on the
 // signal envelope) is what ears hear as buzz/fuzz even when the sample is
 // perfectly linear. Reported (not yet gated) alongside knee exposure.
-double roughnessPct(const std::vector<int16_t>& x) {
+double roughnessPct(const std::vector<int16_t>& samples) {
   static const int kWin = 110;  // ~200 Hz envelope lowpass
-  std::vector<double> env(x.size());
+  std::vector<double> env(samples.size());
   double acc = 0;
-  for (size_t i = 0; i < x.size(); ++i) {
-    acc += std::fabs(static_cast<double>(x[i]));
-    if (i >= static_cast<size_t>(kWin)) acc -= std::fabs(static_cast<double>(x[i - kWin]));
-    env[i] = acc / kWin;
+  for (size_t frame = 0; frame < samples.size(); ++frame) {
+    acc += std::fabs(static_cast<double>(samples[frame]));
+    if (frame >= static_cast<size_t>(kWin)) {
+      acc -= std::fabs(static_cast<double>(samples[frame - kWin]));
+    }
+    env[frame] = acc / kWin;
   }
   double dc = 0;
-  for (double e : env) dc += e;
+  for (double envelope : env) dc += envelope;
   dc /= env.size();
   if (dc <= 0) return 0.0;
   double mod = 0, total = 0;
-  for (double f = 20; f <= 200; f *= 1.15) {
-    const double w = 2 * M_PI * f / kRate, coeff = 2 * cos(w);
-    double s1 = 0, s2 = 0;
-    for (double e : env) {
-      const double s = (e - dc) + coeff * s1 - s2;
-      s2 = s1;
-      s1 = s;
+  for (double freq = 20; freq <= 200; freq *= 1.15) {
+    const double omega = 2 * M_PI * freq / kRate, coeff = 2 * cos(omega);
+    double state1 = 0, state2 = 0;
+    for (double envelope : env) {
+      const double state = (envelope - dc) + coeff * state1 - state2;
+      state2 = state1;
+      state1 = state;
     }
-    mod += std::sqrt(s1 * s1 + s2 * s2 - coeff * s1 * s2) / env.size();
+    mod += std::sqrt(state1 * state1 + state2 * state2 - coeff * state1 * state2) /
+           env.size();
     total += 1;
   }
   return 100.0 * (mod / total) / dc;
 }
 
-void driveVoices(Voice& arp, Voice& pad, int t, int ia, int ib) {
+void driveVoices(Voice& arp, Voice& pad, int time, int instrumentA,
+                 int instrumentB) {
   static const int notesA[4] = {0, 4, 9, 4};
   static const int notesB[4] = {9, 5, 7, 0};
-  if (t % kStepLen == 0) {
-    const int step = t / kStepLen;
-    arp.SetNote(notesA[step % 4], false, (step / 16) % 2 ? 3 : 2, ia);
+  if (time % kStepLen == 0) {
+    const int step = time / kStepLen;
+    arp.SetNote(notesA[step % 4], false, (step / 16) % 2 ? 3 : 2, instrumentA);
     if (step % 8 == 0) {
-      pad.SetNote(notesB[(step / 8) % 4], false, kPadOct, ib);
+      pad.SetNote(notesB[(step / 8) % 4], false, kPadOct, instrumentB);
     }
   }
 }
 
-PairResult testPair(int ia, int ib, std::vector<int16_t>* capture) {
+PairResult testPair(int instrumentA, int instrumentB,
+                    std::vector<int16_t>* capture) {
   Voice arp, pad;
   arp.SetVolume(1);
   arp.SetEnvelopeLength(90000);
   pad.SetVolume(1);
   pad.SetEnvelopeLength(240000);
 
-  PairResult r{ia, ib, 0.0, 0, 0, 0.0, 0.0};
-  long over = 0, n = 0;
+  PairResult result{instrumentA, instrumentB, 0.0, 0, 0, 0.0, 0.0};
+  long over = 0, count = 0;
   int run = 0;
   double sumSq = 0;
   std::vector<int16_t> buf;
   buf.reserve(kSeconds * kRate);
-  for (int t = 0; t < kSeconds * kRate; ++t) {
-    driveVoices(arp, pad, t, ia, ib);
+  for (int time = 0; time < kSeconds * kRate; ++time) {
+    driveVoices(arp, pad, time, instrumentA, instrumentB);
     const int raw = arp.UpdateVoice() + pad.UpdateVoice();
     const int mag = raw < 0 ? -raw : raw;
     if (mag > kKnee) {
       ++over;
-      r.longestRun = std::max(r.longestRun, ++run);
+      result.longestRun = std::max(result.longestRun, ++run);
       int bent = kKnee + (mag - kKnee) / 2;
-      if (bent >= 30000) ++r.capHits;
+      if (bent >= 30000) ++result.capHits;
     } else {
       run = 0;
     }
-    const int16_t v = StageMasterSample(raw, 1);
-    sumSq += static_cast<double>(v) * v;
-    ++n;
-    buf.push_back(v);
+    const int16_t sampleValue = StageMasterSample(raw, 1);
+    sumSq += static_cast<double>(sampleValue) * sampleValue;
+    ++count;
+    buf.push_back(sampleValue);
   }
   if (capture) *capture = std::move(buf);
-  r.kneePct = 100.0 * over / n;
-  r.rms = std::sqrt(sumSq / n);
-  r.roughPct = roughnessPct(buf);
-  return r;
+  result.kneePct = 100.0 * over / count;
+  result.rms = std::sqrt(sumSq / count);
+  result.roughPct = roughnessPct(buf);
+  return result;
 }
 
 }  // namespace
 
 int main() {
   std::vector<PairResult> results;
-  for (int a = 2; a <= 20; ++a) {
-    for (int b = a + 1; b <= 20; ++b) {
-      results.push_back(testPair(a, b, nullptr));
+  for (int instrumentA = 2; instrumentA <= 20; ++instrumentA) {
+    for (int instrumentB = instrumentA + 1; instrumentB <= 20; ++instrumentB) {
+      results.push_back(testPair(instrumentA, instrumentB, nullptr));
     }
   }
   std::sort(results.begin(), results.end(),
-            [](const PairResult& x, const PairResult& y) {
-              return x.roughPct != y.roughPct   ? x.roughPct > y.roughPct
-                     : x.longestRun != y.longestRun ? x.longestRun > y.longestRun
-                                                    : x.kneePct > y.kneePct;
+            [](const PairResult& left, const PairResult& right) {
+              return left.roughPct != right.roughPct
+                         ? left.roughPct > right.roughPct
+                     : left.longestRun != right.longestRun
+                         ? left.longestRun > right.longestRun
+                         : left.kneePct > right.kneePct;
             });
 
   int fails = 0;
@@ -150,25 +157,28 @@ int main() {
               kSustainedRunLimit);
   std::printf("worst 12:\n  %-22s %8s %10s %7s %7s %8s\n", "pair", "knee%",
               "maxRunMs", "caps", "rms", "rough%");
-  for (size_t i = 0; i < results.size(); ++i) {
-    const auto& r = results[i];
+  for (size_t index = 0; index < results.size(); ++index) {
+    const auto& result = results[index];
     const bool bad =
-        r.kneePct > kKneePctLimit || r.longestRun > kSustainedRunLimit;
+        result.kneePct > kKneePctLimit || result.longestRun > kSustainedRunLimit;
     if (bad) ++fails;
-    if (i >= 12) continue;  // display only the top 12 offenders
+    if (index >= 12) continue;  // display only the top 12 offenders
     char label[48];
-    std::snprintf(label, sizeof(label), "%s + %s", kNames[r.a], kNames[r.b]);
-    const double runMs = 1000.0 * r.longestRun / kRate;
-    std::printf("  %-22s %8.2f %10.1f %7d %7.0f %8.2f %s\n", label, r.kneePct,
-                runMs, r.capHits, r.rms, r.roughPct, bad ? "FAIL" : "");
+    std::snprintf(label, sizeof(label), "%s + %s", kNames[result.instrumentA],
+                  kNames[result.instrumentB]);
+    const double runMs = 1000.0 * result.longestRun / kRate;
+    std::printf("  %-22s %8.2f %10.1f %7d %7.0f %8.2f %s\n", label,
+                result.kneePct, runMs, result.capHits, result.rms,
+                result.roughPct, bad ? "FAIL" : "");
   }
 
   if (!results.empty()) {
     const auto& worst = results.front();
     std::vector<int16_t> wav;
-    testPair(worst.a, worst.b, &wav);
-    const std::string path = std::string("tests/native/sweeps/stack_worst_") +
-                             kNames[worst.a] + "_" + kNames[worst.b] + ".wav";
+    testPair(worst.instrumentA, worst.instrumentB, &wav);
+    const std::string path =
+        std::string("tests/native/sweeps/stack_worst_") +
+        kNames[worst.instrumentA] + "_" + kNames[worst.instrumentB] + ".wav";
     if (writeWav(path.c_str(), wav)) {
       std::printf("audition worst pair: %s\n", path.c_str());
     }

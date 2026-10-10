@@ -119,8 +119,8 @@ MappedCommand InputManager::MapToneNote(NoteKey key) {
   switch (key) {
     // ROW: G# – B | Envelope | envelope: 0 decay, 1 swell, 2 sustain, 3 loop
     // ROW: E – G | Delay | delay: 0 off, 1–3 = 2–4-step echo
-    // ROW: C – D# | Arp | filter/arp: 0 dry, 1 lowpass 8-tap, 2 lowpass 4-tap, 3 echo
-    case kKeyC:  return {Command::Arp, 0};        // C..D#  : filter/arp mode
+    // ROW: C – D# | sample FX (Command::Arp -> EffectMode): 0 dry, 1/2 lowpass, 3 echo
+    case kKeyC:  return {Command::Arp, 0};        // C..D#  : EffectMode
     case kKeyCs: return {Command::Arp, 1};
     case kKeyD:  return {Command::Arp, 2};
     case kKeyDs: return {Command::Arp, 3};

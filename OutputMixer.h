@@ -52,9 +52,10 @@ inline int16_t StageMasterSample(int sample, int div = 0) {
   if (sample < 0) {
     out = -out;
   }
-  const int d = div > 0 ? div : MasterDiv();
+  const int divisor = div > 0 ? div : MasterDiv();
   // Round-half-up on magnitude, preserving sign (truncating /4 biases
   // small negative samples toward zero differently than positives).
-  const int q = out >= 0 ? (out + d / 2) / d : -((-out + d / 2) / d);
-  return static_cast<int16_t>(q);
+  const int quantized = out >= 0 ? (out + divisor / 2) / divisor
+                                 : -((-out + divisor / 2) / divisor);
+  return static_cast<int16_t>(quantized);
 }

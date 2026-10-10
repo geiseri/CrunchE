@@ -16,22 +16,59 @@ namespace {
 
 int failures = 0;
 
+void check(bool ok, const char* what) {
+  if (!ok) {
+    std::printf("  FAIL: %s\n", what);
+    ++failures;
+  }
+}
+
 void runCase(const char* label, int val, int oct, int inst, double loHz,
              double hiHz, bool gating) {
-  Voice v;
-  v.SetVolume(2);
-  v.SetNote(val, false, oct, inst);
+  Voice voice;
+  voice.SetVolume(2);
+  voice.SetNote(val, false, oct, inst);
   std::vector<int16_t> buf;
   buf.reserve(22050);
-  for (int i = 0; i < 22050; ++i) {
-    buf.push_back(StageMasterSample(v.UpdateVoice()));
+  for (int frame = 0; frame < 22050; ++frame) {
+    buf.push_back(StageMasterSample(voice.UpdateVoice()));
   }
-  auto m = metrics::measure(buf, loHz, hiHz);
+  auto stats = metrics::measure(buf, loHz, hiHz);
   if (gating) {
-    if (!metrics::gate(label, m, loHz, hiHz, 300)) ++failures;
+    if (!metrics::gate(label, stats, loHz, hiHz, 300)) ++failures;
   } else {
-    metrics::line(label, m);  // timbral sources: informational only
+    metrics::line(label, stats);  // timbral sources: informational only
   }
+}
+
+void TestSetNoteFamilyPlayheadReset() {
+  std::printf("== SetNote InstrumentFamily playhead reset ==\n");
+  Voice voice;
+
+  // Pitched → drum: family change must restart the one-shot playhead.
+  voice.SetNote(0, false, 1, 4);  // pad1 (pitched)
+  for (int frame = 0; frame < 500; ++frame) {
+    (void)voice.UpdateVoice();
+  }
+  check(voice.SampleIndexForTest() > 1.0f, "pitched playhead advanced");
+  voice.SetNote(0, false, 0, 0);  // kick (drum)
+  check(voice.SampleIndexForTest() == 0.0f, "pitched→drum resets playhead");
+
+  // Drum → pitched: family change resets even though pitched can loop.
+  for (int frame = 0; frame < 200; ++frame) {
+    (void)voice.UpdateVoice();
+  }
+  check(voice.SampleIndexForTest() > 1.0f, "drum playhead advanced");
+  voice.SetNote(0, false, 1, 4);  // pad1 again
+  check(voice.SampleIndexForTest() == 0.0f, "drum→pitched resets playhead");
+
+  // Pitched → pitched: continuous phase (same family, no reset).
+  for (int frame = 0; frame < 100; ++frame) {
+    (void)voice.UpdateVoice();
+  }
+  const float before = voice.SampleIndexForTest();
+  voice.SetNote(4, false, 1, 9);  // jbass1, still pitched
+  check(voice.SampleIndexForTest() == before, "pitched→pitched keeps playhead");
 }
 
 }  // namespace
@@ -45,6 +82,8 @@ int main() {
   runCase("pad pad1", 9, 1, 4, 150, 900, false);
   runCase("lead guitar1", 9, 1, 13, 150, 1400, false);
   runCase("bass1 sine o4", 9, 4, 2, 80, 1400, false);
+
+  TestSetNoteFamilyPlayheadReset();
 
   std::printf("%s\n", failures ? "RESULT: FAIL" : "RESULT: PASS");
   return failures ? 1 : 0;

@@ -15,8 +15,8 @@ namespace {
 
 int failures = 0;
 
-const char *CommandName(Command c) {
-  switch (c) {
+const char *CommandName(Command command) {
+  switch (command) {
     case Command::None: return "None";
     case Command::Note: return "Note";
     case Command::Instrument: return "Instrument";
@@ -56,12 +56,12 @@ struct Outcome {
   InputManager::Phase phaseAfter;
 };
 
-Outcome press(InputManager &im, char key) {
-  im.UpdateInput(key);
-  const Outcome o{im.trackCommand, im.trackCommandArgument, im.ledCommand,
-                  im.phase()};
+Outcome press(InputManager &im, char keyChar) {
+  im.UpdateInput(keyChar);
+  const Outcome outcome{im.trackCommand, im.trackCommandArgument, im.ledCommand,
+                        im.phase()};
   im.EndFrame();
-  return o;
+  return outcome;
 }
 
 // ---- state machine --------------------------------------------------------
@@ -174,14 +174,14 @@ void TestMatrix() {
       {'P', 'O', Command::NoteLength, 2},        {'P', 'P', Command::Play, 0},
   };
 
-  for (const Row &r : rows) {
+  for (const Row &row : rows) {
     InputManager im;
-    press(im, r.funcKey);  // arm
-    const auto out = press(im, r.key);
+    press(im, row.funcKey);  // arm
+    const auto out = press(im, row.key);
     char label[96];
-    std::snprintf(label, sizeof(label), "%c+%c -> %s %d", r.funcKey, r.key,
-                  CommandName(r.want), r.arg);
-    if (out.command != r.want || out.arg != r.arg) {
+    std::snprintf(label, sizeof(label), "%c+%c -> %s %d", row.funcKey, row.key,
+                  CommandName(row.want), row.arg);
+    if (out.command != row.want || out.arg != row.arg) {
       std::printf("  FAIL: %s (got %s %d)\n", label, CommandName(out.command),
                   out.arg);
       ++failures;

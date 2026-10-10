@@ -48,7 +48,7 @@ DRUMS = [
     "kick1", "kick2", "snare1", "snare2", "snare3", "snareB1", "snareB2",
     "hihat1", "hihat2", "clap1", "crash1", "ride1",
 ]
-SFX = [f"sfx{i}" for i in range(1, 13)]
+SFX = [f"sfx{index}" for index in range(1, 13)]
 EXTRA_TABLES = ["pureSin", "pureTriSoft"]
 ALL = MELODIC + DRUMS + SFX + EXTRA_TABLES
 
@@ -59,9 +59,9 @@ HDR_DIR = pathlib.Path("Samples")
 
 def load_header(path):
     txt = path.read_text()
-    m = re.search(r"(?:const )?int (\w+)\[\] = \{(.*?)\};", txt, re.S)
-    name = m.group(1)
-    body = m.group(2).strip().rstrip(",")
+    match = re.search(r"(?:const )?int (\w+)\[\] = \{(.*?)\};", txt, re.S)
+    name = match.group(1)
+    body = match.group(2).strip().rstrip(",")
     # ast.literal_eval is the stdlib's EXACT number parser - unlike regex
     # splitting it can never mangle signs or whitespace in the array body.
     vals = list(ast.literal_eval("[" + body + "]"))
@@ -70,7 +70,8 @@ def load_header(path):
 
 def write_header(path, name, guard, vals):
     body = ",\n".join(
-        ",".join(str(v) for v in vals[i:i + 12]) for i in range(0, len(vals), 12)
+        ",".join(str(sampleValue) for sampleValue in vals[index:index + 12])
+        for index in range(0, len(vals), 12)
     )
     path.write_text(
         f"#ifndef {guard}\n#define {guard}\nconst int {name}[] = {{\n{body},\n}};\n"
@@ -79,12 +80,12 @@ def write_header(path, name, guard, vals):
 
 
 def read_wav(path):
-    with wave.open(str(path), "rb") as w:
-        if w.getnchannels() != 1 or w.getsampwidth() != 2:
+    with wave.open(str(path), "rb") as wavFile:
+        if wavFile.getnchannels() != 1 or wavFile.getsampwidth() != 2:
             raise ValueError(f"{path}: must be mono 16-bit")
-        if w.getframerate() != RATE:
-            raise ValueError(f"{path}: must be {RATE} Hz (got {w.getframerate()})")
-        raw = w.readframes(w.getnframes())
+        if wavFile.getframerate() != RATE:
+            raise ValueError(f"{path}: must be {RATE} Hz (got {wavFile.getframerate()})")
+        raw = wavFile.readframes(wavFile.getnframes())
     return list(memoryview(raw).cast("h"))
 
 
@@ -96,12 +97,12 @@ def stats(vals):
     actually heard. The metric is the band the driver can radiate; the
     peak cap still bounds hardware headroom.
     """
-    x = np.asarray(vals, dtype=np.float64)
-    if x.size == 0:
+    samples = np.asarray(vals, dtype=np.float64)
+    if samples.size == 0:
         return 0, 0.0, 0.0, 1.0
-    peak = int(np.max(np.abs(x)))
-    rms = float(np.sqrt(np.mean(x * x)))
-    wrms = float(np.sqrt(np.mean(weighted(x) ** 2)))
+    peak = int(np.max(np.abs(samples)))
+    rms = float(np.sqrt(np.mean(samples * samples)))
+    wrms = float(np.sqrt(np.mean(weighted(samples) ** 2)))
     gain = float(min(TARGET_WRMS / (wrms if wrms > 1 else 1.0),
                      (PEAK_CAP / peak) if peak else 1.0))
     return peak, rms, wrms, gain
@@ -128,14 +129,14 @@ def _band_sos():
 
 
 def weighted(vals):
-    x = np.asarray(vals, dtype=np.float64)
-    if x.size < 4:
-        return x
-    return signal.sosfilt(_band_sos(), x)
+    samples = np.asarray(vals, dtype=np.float64)
+    if samples.size < 4:
+        return samples
+    return signal.sosfilt(_band_sos(), samples)
 
 
-def rms_of(x):
-    x = np.asarray(x, dtype=np.float64)
-    if x.size == 0:
+def rms_of(samples):
+    samples = np.asarray(samples, dtype=np.float64)
+    if samples.size == 0:
         return 0.0
-    return float(np.sqrt(np.mean(x * x)))
+    return float(np.sqrt(np.mean(samples * samples)))

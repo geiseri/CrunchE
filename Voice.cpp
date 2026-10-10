@@ -1,10 +1,12 @@
 #include "Voice.h"
 
 #include <cmath>
+#include <cstddef>
 #include <iterator>
 #include <span>
+#include <utility>
 
-//drums
+// drums
 #include "Samples/kick1.h"
 #include "Samples/kick2.h"
 #include "Samples/snareB2.h"
@@ -17,8 +19,7 @@
 #include "Samples/ride1.h"
 #include "Samples/hihat1.h"
 #include "Samples/hihat2.h"
-//sfx
-
+// sfx
 #include "Samples/sfx1.h"
 #include "Samples/sfx2.h"
 #include "Samples/sfx3.h"
@@ -31,9 +32,7 @@
 #include "Samples/sfx10.h"
 #include "Samples/sfx11.h"
 #include "Samples/sfx12.h"
-
-//instruments
-
+// pitched instruments
 #include "Samples/bass1.h"
 #include "Samples/jbass2.h"
 #include "Samples/pad1.h"
@@ -57,348 +56,275 @@
 #include "SampleGains.h"
 
 namespace {
-// Pitch offsets (semitones) for each arpeggio pattern: [arpNum][step].
-// Row 0 is the "off" pattern and is intentionally silent.
-constexpr int kArps[4][4] = {
-  {0, 0, 0, 0},
-  {-5, -3, 0, 3},
-  {0, 7, 12, 5},
-  {0, 5, 7, 12},
-};
-}  // namespace
-
-Voice::Voice() {
-  octave = 0;
-  envelopeLength_ = 60000;
-  volume_ = 1;
-  voiceNum_ = 0;
-}
-
-static int ClampSample(int value, int bound) {
-  return value > bound ? bound : (value < -bound ? -bound : value);
-}
 
 // Source-normalization reference: stock samples peak near full scale; the
 // instrument gains target this so one voice sits near the master knee
 // (OutputMixer.h) and 2-4 voice sums reach into its soft region only on
 // peaks. Drum/sfx readers apply this directly (sources peak ~32767).
 constexpr float kSourceGain = 8000.0f / 32767.0f;
+// Step-delay retrigger attenuation (Tracker echo cells).
+constexpr float kStepDelayGain = 0.3f;
+constexpr int32_t kOverdriveClipBound = 4000;
+constexpr int32_t kHistoryStoreBound = 32767;
+constexpr int kOptOctaveUseVoice = -1;
 
-int Voice::UpdateVoice() {
-  int sample = 0;
-  if (voiceNum_ > 1) {
-    sample = ReadWaveform();
-  } else if (voiceNum_ == 1) {
-    sample = ReadSfxWaveform();
-  } else {
-    sample = ReadDrumWaveform();
+[[nodiscard]] constexpr int32_t ClampSample(int32_t value, int32_t bound) {
+  return value > bound ? bound : (value < -bound ? -bound : value);
+}
+
+[[nodiscard]] constexpr int32_t ToIndex(std::size_t size) {
+  return static_cast<int32_t>(size);
+}
+
+[[nodiscard]] float FinalizeSample(float sample, float volume, bool isDelay) {
+  sample *= volume;
+  if (isDelay) {
+    sample *= kStepDelayGain;
+  }
+  return sample;
+}
+
+}  // namespace
+
+// One call = one sample at kAudioSampleRate (see AudioConfig.h).
+int32_t Voice::UpdateVoice() {
+  int32_t sample = 0;
+  switch (FamilyOf(voiceNum_)) {
+    case InstrumentFamily::Pitched:
+      sample = ReadWaveform();
+      break;
+    case InstrumentFamily::Sfx:
+      sample = ReadSfxWaveform();
+      break;
+    case InstrumentFamily::Drum:
+      sample = ReadDrumWaveform();
+      break;
   }
 
   // Overdrive: clip first, then double, so output never exceeds +/- 8000.
   if (volume_ == 3) {
-    sample = ClampSample(sample, 4000) * 2;
+    sample = ClampSample(sample, kOverdriveClipBound) * 2;
   }
 
-  // Record every dry sample, not just ones with an effect enabled, so
-  // history taps always reference recent audio right after a switch-on.
+  // Record every dry sample so history taps are valid right after FX enable.
   UpdateHistory(sample);
 
-  // Exactly one effect per voice; unknown values leave the dry sample.
-  switch (arpNum) {
-    case 1: {  // 8-tap moving average
-      int wet = 0;
-      for (int i = 0; i < 8; i++) {
-        wet += GetHistorySample(i);
+  // Exactly one sample FX per voice; EffectMode::Off leaves the dry sample.
+  // (Distinct from Tracker step-delay, which retriggers older grid cells.)
+  switch (effectMode_) {
+    case EffectMode::Lowpass8: {
+      int32_t wet = 0;
+      for (int tap = 0; tap < 8; tap++) {
+        wet += GetHistorySample(tap);
       }
       sample = wet / 4;
       break;
     }
-    case 2: {  // 4-tap moving average
-      int wet = 0;
-      for (int i = 0; i < 4; i++) {
-        wet += GetHistorySample(i);
+    case EffectMode::Lowpass4: {
+      int32_t wet = 0;
+      for (int tap = 0; tap < 4; tap++) {
+        wet += GetHistorySample(tap);
       }
       sample = wet / 2;
       break;
     }
-    case 3: {  // echo: taps 600-1500 samples back, later taps at half gain
-      float wet = 0;
-      for (int i = 2; i < 6; i++) {
-        wet += GetHistorySample(i * 300) / static_cast<float>(i / 3 + 1);
+    case EffectMode::Echo: {
+      float wet = 0.0f;
+      for (int tap = 2; tap < 6; tap++) {
+        wet += static_cast<float>(GetHistorySample(tap * 300)) /
+               static_cast<float>(tap / 3 + 1);
       }
-      sample = static_cast<int>(wet);
+      sample = static_cast<int32_t>(wet);
       break;
     }
-    default:
+    case EffectMode::Off:
       break;
   }
 
-  // Loudness contract: voices output raw samples bounded by the source-gain
-  // table (~9000 peak at volume 1; overdrive caps itself at 8000 above).
-  // The ONLY nonlinear safety stage is the master limiter in OutputMixer.h,
-  // which the stack test verifies normal program never reaches.
+  // Loudness contract: voices emit raw samples (~9000 peak at volume 1;
+  // overdrive self-caps at 8000). Master limiter is the only nonlinearity.
   return sample;
 }
 
-int Voice::ReadWaveform() {
+int32_t Voice::ReadWaveform() {
   struct InstrumentSource {
     std::span<const int> data;
     float gain;
   };
-  // RMS-normalized gains GENERATED by tools/gen_headers.py
-  // (SampleGains.h) from the exact PCM being shipped: target ~3400 output
-  // RMS per source, capped so peak stays <= 9000. Perceived loudness
-  // follows RMS, not peak. Regenerate after any Samples_src change.
+  // RMS-normalized gains GENERATED by tools/gen_headers.py (SampleGains.h).
+  // Target ~3400 RMS, peak <= 9000. Regenerate after any Samples_src change.
   static const InstrumentSource instrumentSources[] = {
-    {bass1, kGain_bass1},
-    {jbass2, kGain_jbass2},
-    {pad1, kGain_pad1},
-    {jpad1, kGain_jpad1},
-    {pad3, kGain_pad3},
-    {bongo1, kGain_bongo1},
-    {synth2, kGain_synth2},
-    {jbass1, kGain_jbass1},
-    {jlead1, kGain_jlead1},
-    {jlead2, kGain_jlead2},
-    // voiceNum 12-20: instrument bank 1. pureSin/pureTriSoft are
-    // tiny lookup tables, intentionally not offered as instruments.
-    {bass2, kGain_bass2},
-    {guitar1, kGain_guitar1},
-    {jlead3, kGain_jlead3},
-    {jlead4, kGain_jlead4},
-    {kick3, kGain_kick3},
-    {pad2, kGain_pad2},
-    {snareB3, kGain_snareB3},
-    {synth1, kGain_synth1},
-    {synth3, kGain_synth3},
+      {bass1, kGain_bass1},     {jbass2, kGain_jbass2},
+      {pad1, kGain_pad1},       {jpad1, kGain_jpad1},
+      {pad3, kGain_pad3},       {bongo1, kGain_bongo1},
+      {synth2, kGain_synth2},   {jbass1, kGain_jbass1},
+      {jlead1, kGain_jlead1},   {jlead2, kGain_jlead2},
+      // voiceNum 12-20: instrument bank 1.
+      {bass2, kGain_bass2},     {guitar1, kGain_guitar1},
+      {jlead3, kGain_jlead3},   {jlead4, kGain_jlead4},
+      {kick3, kGain_kick3},     {pad2, kGain_pad2},
+      {snareB3, kGain_snareB3}, {synth1, kGain_synth1},
+      {synth3, kGain_synth3},
   };
 
-  const int voiceIndex = voiceNum_ - 2;
-  if (voiceIndex < 0 || voiceIndex >= static_cast<int>(std::size(instrumentSources))) {
+  const int32_t voiceIndex = voiceNum_ - 2;
+  if (voiceIndex < 0 ||
+      std::cmp_greater_equal(voiceIndex, std::size(instrumentSources))) {
     return 0;
   }
 
   const auto &source = instrumentSources[voiceIndex];
-  const int sampleLen = static_cast<int>(source.data.size());
+  const int32_t sampleLen = ToIndex(source.data.size());
   sampleIndex_ = std::fmod(sampleIndex_, static_cast<float>(sampleLen));
 
-  // Linear interpolation between neighbors (fractional read positions).
-  const int i0 = static_cast<int>(sampleIndex_);
-  const int i1 = (i0 + 1 >= sampleLen) ? 0 : i0 + 1;
+  const int32_t index0 = static_cast<int32_t>(sampleIndex_);
+  const int32_t index1 = (index0 + 1 >= sampleLen) ? 0 : index0 + 1;
   float sample =
-      LerpSample(source.data[i0], source.data[i1], sampleIndex_ - i0) * source.gain;
+      LerpSample(source.data[index0], source.data[index1],
+                 sampleIndex_ - static_cast<float>(index0)) *
+      source.gain;
 
-  float volumeRatio = GetVolumeRatio();
   sampleIndex_ += baseFreq_;
-
   if (envelope_ > 0) {
-    envelope_ -= 10;
+    envelope_ -= kEnvelopeDecrementPerSample;
   }
 
-  sample = (int)(sample * volume_ * volumeRatio);
-  if (isDelay_) {
-    sample *= .3;
-  }
-  return (int)sample;
+  sample = FinalizeSample(sample * GetVolumeRatio(), volume_, isDelay_);
+  return static_cast<int32_t>(sample);
 }
 
-int Voice::ReadDrumWaveform() {
+int32_t Voice::ReadOneShotWaveform(std::span<const int> source) {
+  const int32_t sampleLen = ToIndex(source.size());
+  if (sampleIndex_ >= static_cast<float>(sampleLen)) {
+    return 0;
+  }
+
+  int32_t subSampleIndex = static_cast<int32_t>(sampleIndex_);
+  if (envelopeNum_ > 1) {
+    subSampleIndex = sampleLen - subSampleIndex - 1;
+  }
+
+  float sample = static_cast<float>(source[subSampleIndex]);
+  sampleIndex_ += (octave < 1) ? 1.0f : static_cast<float>(octave);
+
+  sample = FinalizeSample(sample * kSourceGain, volume_, isDelay_);
+  return static_cast<int32_t>(sample);
+}
+
+int32_t Voice::ReadDrumWaveform() {
   static const std::span<const int> drumSources[] = {
-    kick1,
-    snare1,
-    snareB1,
-    hihat1,
-    kick2,
-    snare2,
-    snare3,
-    hihat2,
-    snareB2,
-    clap1,
-    crash1,
-    ride1,
+      kick1, snare1, snareB1, hihat1, kick2,  snare2,
+      snare3, hihat2, snareB2, clap1,  crash1, ride1,
   };
 
-  if (note_ < 0 || note_ >= static_cast<int>(std::size(drumSources))) {
+  if (note_ < 0 || std::cmp_greater_equal(note_, std::size(drumSources))) {
     return 0;
   }
-
-  const auto &source = drumSources[note_];
-  const int sampleLen = static_cast<int>(source.size());
-  if (sampleIndex_ >= sampleLen) {
-    return 0;
-  }
-
-  int subSampleIndex = (int)sampleIndex_;
-  if (envelopeNum_ > 1) {
-    subSampleIndex = sampleLen - subSampleIndex - 1;
-  }
-
-  float sample = source[subSampleIndex];
-  sampleIndex_ += octave < 1 ? 1 : octave;
-
-  sample *= volume_ * kSourceGain;
-  if (isDelay_) {
-    sample *= .3;
-  }
-  return (int)sample;
+  return ReadOneShotWaveform(drumSources[note_]);
 }
 
-int Voice::ReadSfxWaveform() {
+int32_t Voice::ReadSfxWaveform() {
   static const std::span<const int> sfxSources[] = {
-    sfx1,
-    sfx2,
-    sfx3,
-    sfx4,
-    sfx5,
-    sfx6,
-    sfx7,
-    sfx8,
-    sfx9,
-    sfx10,
-    sfx11,
-    sfx12,
+      sfx1, sfx2, sfx3,  sfx4,  sfx5,  sfx6,
+      sfx7, sfx8, sfx9,  sfx10, sfx11, sfx12,
   };
 
-  if (note_ < 0 || note_ >= static_cast<int>(std::size(sfxSources))) {
+  if (note_ < 0 || std::cmp_greater_equal(note_, std::size(sfxSources))) {
     return 0;
   }
-
-  const auto &source = sfxSources[note_];
-  const int sampleLen = static_cast<int>(source.size());
-  if (sampleIndex_ >= sampleLen) {
-    return 0;
-  }
-
-  int subSampleIndex = (int)sampleIndex_;
-  if (envelopeNum_ > 1) {
-    subSampleIndex = sampleLen - subSampleIndex - 1;
-  }
-
-  float sample = source[subSampleIndex];
-  sampleIndex_ += octave < 1 ? 1 : octave;
-
-  sample *= volume_ * kSourceGain;
-  if (isDelay_) {
-    sample *= .3;
-  }
-  return (int)sample;
+  return ReadOneShotWaveform(sfxSources[note_]);
 }
 
-float Voice::LerpSample(int sampleA, int sampleB, float ratio) {
-  return (float)sampleA + ((float)(sampleB - sampleA) * ratio);
+float Voice::LerpSample(int32_t sampleA, int32_t sampleB, float ratio) {
+  return static_cast<float>(sampleA) +
+         static_cast<float>(sampleB - sampleA) * ratio;
 }
 
 float Voice::GetBaseFreq(int val, int ioctave) {
-  // Equal-tempered playback ratio: one octave doubles the sample rate, so a
-  // semitone is 2^(1/12). The previous linear approximation (1 + n*0.092)
-  // collapsed every 12 semitones into a fixed +1.104 step — an "octave"
-  // jumped only ~x1.4-1.6 depending on register — so arpeggios spanning
-  // octaves played wrong intervals against sustained voices and beat as
-  // audible buzz (confirmed on good speakers via the native WAV review).
+  // Equal-tempered playback ratio: one octave doubles the sample rate.
   const int semitones = val + ioctave * 12;
   return powf(2.0f, static_cast<float>(semitones) / 12.0f);
 }
 
 float Voice::GetVolumeRatio() {
-  if (voiceNum_ == 0) {
-    return 1;
+  if (FamilyOf(voiceNum_) == InstrumentFamily::Drum) {
+    return 1.0f;
   }
-  float subVal = 0;
-  float subVal2 = 0;
+  const float envNorm =
+      static_cast<float>(envelope_) / static_cast<float>(envelopeLength_);
   switch (envelopeNum_) {
-    case 0:
-      subVal = ((float)envelope_ / (float)envelopeLength_);
-      subVal *= 2;
-      if (subVal > 1) {
-        subVal = 1;
+    case 0: {
+      float subVal = envNorm * 2.0f;
+      return (subVal > 1.0f) ? 1.0f : subVal;
+    }
+    case 1: {
+      // Gate off after a full envelope period.
+      if ((1.0f - envNorm) >= 1.0f) {
+        return 0.0f;
       }
-      return subVal;
-      break;
-    case 1:
-
-      subVal = (1 - ((float)envelope_ / (float)envelopeLength_) * 2 + 1);
-      subVal2 = (1 - ((float)envelope_ / (float)envelopeLength_));
-
-      if (subVal2 >= 1) {
-        subVal = 0;
-      }
-
-      return subVal;
-      break;
+      return 2.0f - envNorm * 2.0f;
+    }
     case 2:
-      subVal = 1;
-      subVal2 = (1 - ((float)envelope_ / (float)envelopeLength_));
-      if (subVal2 >= 1) {
-        subVal = 0;
-      }
-      return subVal;
-      break;
-    case 3:
-      float env = (((float)envelope_ / (float)envelopeLength_) - 0.5) * 2;
+      return ((1.0f - envNorm) >= 1.0f) ? 0.0f : 1.0f;
+    case 3: {
       if (envelope_ <= 0) {
         envelope_ = envelopeLength_;
       }
-      return (.5 + std::abs(env) * .5);
-      break;
+      const float env = (envNorm - 0.5f) * 2.0f;
+      return 0.5f + std::abs(env) * 0.5f;
+    }
+    default:
+      return 1.0f;
   }
-  return 1;
 }
 
 void Voice::SetNote(int val, bool delay, int optOctave, int optInstrument) {
-  if (voiceNum_ < 2)
-    sampleIndex_ = 0;
+  // Reset playhead from the *incoming* instrument family, not the previous
+  // voiceNum_. One-shots always restart; pitched keeps phase unless the
+  // family changes either direction (drum/sfx <-> pitched).
+  const InstrumentFamily incoming = FamilyOf(optInstrument);
+  const InstrumentFamily previous = FamilyOf(voiceNum_);
+  const bool familyChanged = (incoming != previous);
+  const bool isOneShot = (incoming == InstrumentFamily::Drum ||
+                          incoming == InstrumentFamily::Sfx);
+  if (isOneShot || familyChanged) {
+    sampleIndex_ = 0.0f;
+  }
 
   note_ = val;
   envelope_ = envelopeLength_;
   voiceNum_ = optInstrument;
-  if (optOctave == -1)
-    baseFreq_ = GetBaseFreq(val, octave);
-  else
-    baseFreq_ = GetBaseFreq(val, optOctave);
-
-  arpCount_++;
-  if (arpCount_ > 3) {
-    arpCount_ = 0;
-  }
+  const int octaveForPitch =
+      (optOctave == kOptOctaveUseVoice) ? octave : optOctave;
+  baseFreq_ = GetBaseFreq(val, octaveForPitch);
   isDelay_ = delay;
 }
 
-void Voice::SetDelay(int val) {
-  delay = val;
-}
+void Voice::SetDelay(int val) { delay = val; }
 
-void Voice::SetVolume(int val) {
-  volume_ = val;
-}
+void Voice::SetVolume(int val) { volume_ = static_cast<float>(val); }
 
-void Voice::SetOctave(int val) {
-  octave = val;
-}
+void Voice::SetOctave(int val) { octave = val; }
 
-void Voice::SetEnvelopeNum(int val) {
-  envelopeNum_ = val;
-}
+void Voice::SetEnvelopeNum(int val) { envelopeNum_ = val; }
 
-void Voice::SetEnvelopeLength(int val) {
-  envelopeLength_ = val;
-}
+void Voice::SetEnvelopeLength(int val) { envelopeLength_ = val; }
 
-void Voice::SetArpNum(int val) {
-  arpNum = val;
-}
+void Voice::SetEffectMode(EffectMode mode) { effectMode_ = mode; }
 
-void Voice::UpdateHistory(int sample) {
-  sampleHistory_[sampleHistoryIndex_] = sample;
+void Voice::UpdateHistory(int32_t sample) {
+  sampleHistory_[sampleHistoryIndex_] =
+      static_cast<int16_t>(ClampSample(sample, kHistoryStoreBound));
   sampleHistoryIndex_++;
-  if (sampleHistoryIndex_ > 1999) {
+  if (sampleHistoryIndex_ >= kSampleHistoryLength) {
     sampleHistoryIndex_ = 0;
   }
 }
 
-int Voice::GetHistorySample(int backoffset) {
-  int ind = sampleHistoryIndex_ - backoffset;
+int32_t Voice::GetHistorySample(int backOffset) {
+  int ind = sampleHistoryIndex_ - backOffset;
   if (ind < 0) {
-    ind = 1999 + ind;
+    ind += kSampleHistoryLength;
   }
   return sampleHistory_[ind];
 }

@@ -24,27 +24,31 @@ struct Result {
   double dominantHz = 0;
 };
 
-inline double dominantHz(const std::vector<int16_t>& x, double loHz, double hiHz) {
-  const int n = static_cast<int>(x.size());
+inline double dominantHz(const std::vector<int16_t>& samples, double loHz,
+                         double hiHz) {
+  const int length = static_cast<int>(samples.size());
   int minLag = std::max(2, static_cast<int>(kRate / hiHz));
-  int maxLag = std::min(n - 2, static_cast<int>(kRate / loHz));
-  long e0 = 0;
-  for (int i = 0; i < n; ++i) e0 += static_cast<long>(x[i]) * x[i];
-  if (e0 == 0) return 0.0;
+  int maxLag = std::min(length - 2, static_cast<int>(kRate / loHz));
+  long energy0 = 0;
+  for (int index = 0; index < length; ++index) {
+    energy0 += static_cast<long>(samples[index]) * samples[index];
+  }
+  if (energy0 == 0) return 0.0;
   std::vector<double> norm(maxLag + 1, 0.0);
   for (int lag = 0; lag <= maxLag; ++lag) {
     long acc = 0;
-    for (int i = 0; i + lag < n; ++i) {
-      acc += static_cast<long>(x[i]) * x[i + lag];
+    for (int index = 0; index + lag < length; ++index) {
+      acc += static_cast<long>(samples[index]) * samples[index + lag];
     }
-    norm[lag] = static_cast<double>(acc) / e0;
+    norm[lag] = static_cast<double>(acc) / energy0;
   }
   int bestLag = 0;
   double bestVal = 0.0;
   for (int lag = minLag; lag <= maxLag; ++lag) {
-    const double v = norm[lag];
-    if (v > 0.5 && v >= norm[lag - 1] && v > norm[lag + 1] && v > bestVal) {
-      bestVal = v;
+    const double sampleValue = norm[lag];
+    if (sampleValue > 0.5 && sampleValue >= norm[lag - 1] &&
+        sampleValue > norm[lag + 1] && sampleValue > bestVal) {
+      bestVal = sampleValue;
       bestLag = lag;
     }
   }
@@ -59,47 +63,52 @@ inline double dominantHz(const std::vector<int16_t>& x, double loHz, double hiHz
   return bestLag ? kRate / bestLag : 0.0;
 }
 
-inline Result measure(const std::vector<int16_t>& buf, double loHz, double hiHz) {
-  Result m;
+inline Result measure(const std::vector<int16_t>& buf, double loHz,
+                      double hiHz) {
+  Result result;
   double sumSq = 0, diffSq = 0, absDiffSum = 0;
-  for (size_t i = 0; i < buf.size(); ++i) {
-    const double v = buf[i];
-    m.peak = std::max(m.peak, std::fabs(v));
-    sumSq += v * v;
-    if (i > 0) {
-      const double d = v - buf[i - 1];
-      diffSq += d * d;
-      absDiffSum += std::fabs(d);
+  for (size_t index = 0; index < buf.size(); ++index) {
+    const double sampleValue = buf[index];
+    result.peak = std::max(result.peak, std::fabs(sampleValue));
+    sumSq += sampleValue * sampleValue;
+    if (index > 0) {
+      const double delta = sampleValue - buf[index - 1];
+      diffSq += delta * delta;
+      absDiffSum += std::fabs(delta);
     }
   }
-  m.rms = std::sqrt(sumSq / buf.size());
-  m.fizzRms = std::sqrt(diffSq / buf.size());
+  result.rms = std::sqrt(sumSq / buf.size());
+  result.fizzRms = std::sqrt(diffSq / buf.size());
   const double clickThreshold = (absDiffSum / buf.size()) * 8.0;
   long clicks = 0;
-  for (size_t i = 1; i < buf.size(); ++i) {
-    if (std::fabs(static_cast<double>(buf[i]) - buf[i - 1]) > clickThreshold) {
+  for (size_t index = 1; index < buf.size(); ++index) {
+    if (std::fabs(static_cast<double>(buf[index]) - buf[index - 1]) >
+        clickThreshold) {
       ++clicks;
     }
   }
-  m.clicksPerSec = clicks / (buf.size() / kRate);
+  result.clicksPerSec = clicks / (buf.size() / kRate);
   const std::vector<int16_t> win(buf.begin() + 1000, buf.begin() + 3205);
-  m.dominantHz = dominantHz(win, loHz, hiHz);
-  return m;
+  result.dominantHz = dominantHz(win, loHz, hiHz);
+  return result;
 }
 
-inline void line(const char* label, const Result& m) {
-  std::printf("%-30s peak=%6.0f rms=%6.0f fizz=%6.0f clicks/s=%6.1f dom=%6.1fHz\n",
-              label, m.peak, m.rms, m.fizzRms, m.clicksPerSec, m.dominantHz);
+inline void line(const char* label, const Result& result) {
+  std::printf(
+      "%-30s peak=%6.0f rms=%6.0f fizz=%6.0f clicks/s=%6.1f dom=%6.1fHz\n",
+      label, result.peak, result.rms, result.fizzRms, result.clicksPerSec,
+      result.dominantHz);
 }
 
 // Prints the metric line plus a PASS/FAIL verdict on level + pitch band.
-inline bool gate(const char* label, const Result& m, double loHz, double hiHz,
-                 double minRms) {
-  const bool ok = m.rms >= minRms && m.dominantHz >= loHz && m.dominantHz <= hiHz;
+inline bool gate(const char* label, const Result& result, double loHz,
+                 double hiHz, double minRms) {
+  const bool ok = result.rms >= minRms && result.dominantHz >= loHz &&
+                  result.dominantHz <= hiHz;
   char full[64];
   std::snprintf(full, sizeof(full), "%s %s", label, ok ? "PASS" : "FAIL");
   full[sizeof(full) - 1] = '\0';
-  line(label, m);
+  line(label, result);
   return ok;
 }
 

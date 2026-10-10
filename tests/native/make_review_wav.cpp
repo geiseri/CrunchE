@@ -23,23 +23,24 @@ constexpr long kSteps = 8;  // 120 BPM sixteenths
 
 // Render one demo arp/pad voice in isolation with the demo's own settings.
 std::vector<int16_t> renderVoice(bool lead, int instrument) {
-  std::vector<int16_t> v;
+  std::vector<int16_t> samples;
   Voice voice;
   voice.SetVolume(1);
   voice.SetEnvelopeLength(lead ? 90000 : 240000);
   static const int kArpNotes[4] = {0, 4, 9, 4};
   static const int kPadNotes[4] = {9, 5, 7, 0};
   for (int step = 0; step < 32; ++step) {
-    for (int i = 0; i < 2756; ++i) {
-      v.push_back(StageMasterSample(voice.UpdateVoice(), 1));
+    for (int frame = 0; frame < 2756; ++frame) {
+      samples.push_back(StageMasterSample(voice.UpdateVoice(), 1));
     }
     if (lead) {
-      voice.SetNote(kArpNotes[step % 4], false, (step / 16) % 2 ? 2 : 1, instrument);
+      voice.SetNote(kArpNotes[step % 4], false, (step / 16) % 2 ? 2 : 1,
+                    instrument);
     } else if (step % 8 == 0) {
       voice.SetNote(kPadNotes[(step / 8) % 4], false, 0, instrument);
     }
   }
-  return v;
+  return samples;
 }
 
 }  // namespace
@@ -53,8 +54,8 @@ int main() {
   Tracker tr;
   tr.LoadDemoSong();
   std::vector<int16_t> per[4], full[4];
-  for (int s = 0; s < 4 * 32; ++s) {
-    for (long i = 0; i < metrics::kRate / kSteps; ++i) {
+  for (int step = 0; step < 4 * 32; ++step) {
+    for (long frame = 0; frame < metrics::kRate / kSteps; ++frame) {
       g_millisUs += 1000000.0 / metrics::kRate;
       const int raw = tr.UpdateTracker();
       per[tr.currentPattern].push_back(StageMasterSample(raw));
@@ -63,16 +64,19 @@ int main() {
   }
   int failures = 0;
   const char* names[4] = {"P0 full mix", "P1 drums", "P2 bass", "P3 lead+pad"};
-  for (int p = 0; p < 4; ++p) {
-    if (!metrics::gate(names[p], metrics::measure(per[p], 25, 900), 25, 900, 300)) {
+  for (int patternIndex = 0; patternIndex < 4; ++patternIndex) {
+    if (!metrics::gate(names[patternIndex],
+                       metrics::measure(per[patternIndex], 25, 900), 25, 900,
+                       300)) {
       ++failures;
     }
   }
 
   std::vector<int16_t> wav;
   const std::vector<int16_t> gap(4410, 0);
-  for (int p = 0; p < 4; ++p) {
-    wav.insert(wav.end(), full[p].begin(), full[p].end());
+  for (int patternIndex = 0; patternIndex < 4; ++patternIndex) {
+    wav.insert(wav.end(), full[patternIndex].begin(),
+               full[patternIndex].end());
   }
   const std::pair<int, const char*> kShootout[] = {
       {8, "synth2 (was the buzzing lead)"},
