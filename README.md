@@ -148,6 +148,52 @@ whether the amp's rail-limited output (≈0.8 W @ 3.3 V, ≈1.8 W @ 5 V into
 are the safety line; if it doesn't (1 W driver on 3.3 V), the amp itself is
 the ceiling and you can afford `kMasterDiv = 2`.
 
+### Deriving the band from a spec sheet (F0, response, THD curves)
+
+A datasheet's resonance, frequency-response, and THD curves contain
+everything `SPEAKER_BAND_HZ` needs. `python tools/band_from_curve.py` does
+the arithmetic; the reasoning it encodes:
+
+**Low edge `lo` — from the curve, fall back to F0.** An unbaffled driver is
+acoustically a 2nd-order high-pass: below Fs cone excursion goes constant
+([Linkwitz](https://www.linkwitzlab.com/models.htm) — *"below the driver
+resonance Fs the excursion X1 becomes constant"*), so velocity ∝ f and SPL ∝
+f² — a **12 dB/octave** rolloff. That is exactly why `BAND_ORDER = 2` is the
+right low skirt, and why sub-F0 content doesn't just fade, it *vanishes*.
+`lo` is the curve's −3 dB-from-midband corner (reference = mean response over
+0.5–2 kHz). **When there's no curve: `lo ≈ F0(typ)`** — but the ignore
+min/max columns assumes Qts ≈ 0.7: the −3 dB point equals Fs only at
+Qts = 0.707 (maximally flat); a peaky Qts ≈ 1.5 puts it at ~0.7·Fs *with* a
++4 dB hump, and a damped Qts ≈ 0.3 doesn't reach −3 dB until ~3·Fs. So with
+Qts (usually T/S parameters list it) or a curve, trust those; F0 alone is a
+±3 dB-class estimate. F0 min/max (±10–20 %) matters less than that.
+
+**High edge `hi` — curve vetoed by the THD curve.** The response curve keeps
+looking alive into cone break-up where the sound is already filthy:
+`hi = min(−3 dB corner, lowest f where THD(f) exceeds threshold)`. The
+threshold must respect masking ([Audioholics](https://www.audioholics.com/loudspeaker-design/audibility-of-distortion-at-bass),
+citing Fielder & Benjamin): at 110 dB a 20 Hz tone masks its 2nd harmonic up
+to ~5 %, but a 5th harmonic only at fraction-of-1 % — low frequencies and
+low harmonic orders are *more* tolerable, HF less so. In dense music even
+30 % peaks went unnoticed. Practical rule for a toy amp at modest SPL:
+**~5 % near/below the LF hump, ~3 % in the upper band, and re-check at your
+actual drive level** (`kMasterDiv`-limited, often ≪ rated W — THD scales
+hard with excursion).
+
+**The LF THD hump also picks `SATURATE`.** Distortion peaks at/below Fs
+(suspension/excursion nonlinearity — Klippel's standard `THD(Fs)` metric):
+a driver showing a big THD hump near Fs is saying its fundamentals there are
+dirty, exactly when `SATURATE` + a shift/harmonic generator (folding energy
+*into* the band) is the honest fix. Cross-check: a voice whose energy sits
+one octave below `lo` radiates ~1/16 the power (−12 dB, 2nd order) — that's
+the "peak-capped but still quiet in-band" list in `loops.py`, from the datasheet's side.
+
+**Tolerance, honestly:** edge placement errors are nearly free for voices
+centered well above `lo` (weight ratio ≤ +2.6 dB for 20 % at the edge) but
+reach ~+6 dB one octave *below* it — so voices straddling `lo` are the ones
+that shift. `gen_all.sh` + the native gates + one listen beat any amount of
+spreadsheet theorizing.
+
 ### Swapping a speaker — checklist
 
 1. `tools/samplelib.py` — `SPEAKER_BAND_HZ` (+ `BAND_ORDER` if you want
