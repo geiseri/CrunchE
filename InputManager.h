@@ -4,14 +4,15 @@
 #include <cstdint>
 
 // ---------------------------------------------------------------------------
-// Keypad semantics - the single place note/function keys and their commands
-// are defined. Values keep the historical command characters so serial
-// traces, docs/InstA.png and muscle memory map 1:1.
-// Audit target: every entry here is exercised by the native gate scripts.
+// Keypad enums + state machine. Armed-key → Command+arg tables live in
+// KeypadMaps.cpp (SOURCE OF TRUTH); KeypadConstants.h holds tempo/bank
+// constants. tools/gen_keypad.sh derives docs/InstA.png and the native
+// matrix include from those files.
 // ---------------------------------------------------------------------------
 
 // Note keys in electrical order (bottom silkscreen row first):
 // 0 = C ... 11 = B. No count sentinels - they leak into every switch.
+// tools/keypad_contract.py reads this enum for InstA note order.
 enum NoteKey : int8_t {
   kKeyC = 0,
   kKeyCs,
@@ -112,22 +113,18 @@ class InputManager {
   void ProcessNoteKey(NoteKey key);
   void ProcessFunctionKey(FunctionKey pressed);
 
-  // Pure mappings (armed state + key -> command): side-effect free, so the
-  // whole keypad contract fits in switches and can be audited against the
-  // instruction sheet without reading the state machine. One mapper per
-  // armed function; every case label is an explicit key enum value.
   static MappedCommand MapArmedNote(FunctionKey armed, NoteKey key);
   static MappedCommand MapArmedFunction(FunctionKey armed, FunctionKey pressed);
 
-  static MappedCommand MapVoiceNote(NoteKey key);      // F1 + C..B
-  static MappedCommand MapToneNote(NoteKey key);       // F2 + C..B
-  static MappedCommand MapPatternNote(NoteKey key);    // F3 + C..B
-  static MappedCommand MapSongNote(NoteKey key);       // F4 + C..B
+  static MappedCommand MapVoiceNote(NoteKey key);
+  static MappedCommand MapToneNote(NoteKey key);
+  static MappedCommand MapPatternNote(NoteKey key);
+  static MappedCommand MapSongNote(NoteKey key);
 
-  static MappedCommand MapVoiceFunction(FunctionKey pressed);     // F1 + F1..F4
-  static MappedCommand MapToneFunction(FunctionKey pressed);      // F2 + F1..F4
-  static MappedCommand MapPatternFunction(FunctionKey pressed);   // F3 + F1..F4
-  static MappedCommand MapSongFunction(FunctionKey pressed);      // F4 + F1..F4
+  static MappedCommand MapVoiceFunction(FunctionKey pressed);
+  static MappedCommand MapToneFunction(FunctionKey pressed);
+  static MappedCommand MapPatternFunction(FunctionKey pressed);
+  static MappedCommand MapSongFunction(FunctionKey pressed);
 
   void Disarm();
 

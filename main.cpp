@@ -16,7 +16,7 @@ LedManager ledManager(PIN_LED_A, PIN_LED_B, PIN_LED_C, PIN_LED_D);
 InputManager inputManager;
 Tracker tracker;
 
-// Keypad: silkscreen F1–F4 / G#–B / E–G / C–D#; matrix L1–L4 × R4–R1.
+// Keypad: silkscreen F1-F4 / G#-B / E-G / C-D#; matrix L1-L4 × R4-R1.
 constexpr byte kKeypadRows = 4;
 constexpr byte kKeypadCols = 4;
 
@@ -41,7 +41,7 @@ const int sampleRate = static_cast<int>(kAudioSampleRate);
 constexpr int kNumLeds = 1;
 constexpr uint32_t kLedUpdateIntervalMs = 33;  // ~30 fps; FastLED.show() blocks
 constexpr int kVuPeakFullScale = 8000;         // post-/4 mix ceiling for brightness map
-constexpr int kVuPeakDivisor = 32;             // maps peak → 0–250 brightness
+constexpr int kVuPeakDivisor = 32;             // maps peak → 0-250 brightness
 
 CRGB leds[kNumLeds];
 int ledPeak = 0;

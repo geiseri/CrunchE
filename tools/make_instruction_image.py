@@ -1,115 +1,69 @@
 #!/usr/bin/env python3
-"""Generate docs/InstA.png from the FIRMWARE, not from this file.
+"""Render docs/InstA.png — standalone keypad printout from firmware C++.
 
-Section text is pulled from KEYPAD-DOC `ROW:`/`HDR:` comment blocks inside
-the dispatch functions in InputManager.cpp, and the instrument grids are
-pulled from the live `instrumentSources[]` table in Voice.cpp. The
-generator HARD-FAILS if a mapper's returned Commands ever disagree with
-its documented ROW set - so any key/function change must update the doc
-comment or the keymap build breaks. That is the exposure mechanism.
+Source of truth:
+  KeypadMaps.cpp          — key → Command + KEYPAD-DOC sheet wording
+  KeypadConstants.h       — tempo/bank + KEYPAD-SILK membrane layout
+  InputManager.h          — NoteKey electrical order
+  Voice.cpp               — pitched instrument names on the F1 grids
 
     ~/.platformio/penv/bin/python tools/make_instruction_image.py
 """
+from __future__ import annotations
+
 import pathlib
 import re
 import sys
 
-from PIL import Image, ImageDraw, ImageFont
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from keypad_contract import load_contract  # noqa: E402
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:
+    sys.exit("need Pillow: ~/.platformio/penv/bin/python -m pip install pillow")
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# --------------------------------------------------------------------------
-# Parsing the firmware contract
-# --------------------------------------------------------------------------
-
-NOTE_MAPPERS = {1: "MapVoiceNote", 2: "MapToneNote", 3: "MapPatternNote",
-                4: "MapSongNote"}
-FN_MAPPERS = {1: "MapVoiceFunction", 2: "MapToneFunction",
-              3: "MapPatternFunction", 4: "MapSongFunction"}
-
-ROW_RE = re.compile(r"//\s*ROW:\s*(.+?)\s*\|\s*(\w+)\s*\|\s*(.+)$")
-HDR_RE = re.compile(r"//\s*HDR:\s*(.+)$")
-RET_RE = re.compile(r"return\s*\{\s*Command::(\w+)")
+TITLE = "Crunch-E Keypad Quick-ref"
+BLURB = "F1-F4 arm a function (its LED stays lit); the next key applies it."
+FOOTER = (
+    "No F key held: C-B records a note into the selected track while playing, "
+    "or plays it live when stopped. Notes store the instrument and octave held "
+    "at record time. Voice names above are the sample sources in Samples/."
+)
 
 
-def parse_mapper(src, name):
-    """Return (rows[(label, cmd, desc)], hdr, returned_cmds) for one mapper."""
-    sig = src.index(f"InputManager::{name}(")
-    end = src.index("\n}", sig)
-    body = src[sig:end]
-    rows, hdr = [], None
-    for line in body.splitlines():
-        match = ROW_RE.search(line)
-        if match:
-            rows.append((match.group(1), match.group(2), match.group(3)))
-        match = HDR_RE.search(line)
-        if match:
-            hdr = match.group(1).strip()
-    returned = set(RET_RE.findall(body))
-    documented = {row[1] for row in rows}
-    if documented != returned:
-        sys.exit(f"KEYPAD-DOC out of sync in {name}: "
-                 f"documented {sorted(documented)} vs returns "
-                 f"{sorted(returned)} - fix the ROW comments or the code")
-    if rows and not returned:
-        sys.exit(f"KEYPAD-DOC in {name}: rows documented but no Commands found")
-    return rows, hdr, returned
-
-
-def parse_instruments():
-    """Voice.cpp instrumentSources[] -> ordered sample names (voiceNum 2+)."""
+def parse_instruments(bank1_offset: int):
     voice = (ROOT / "Voice.cpp").read_text()
     table = voice[voice.index("instrumentSources[] = {"):]
     table = table[:table.index("};")]
     names = re.findall(r"\{(\w+),\s*kGain_\w+\}", table)
-    if len(names) != 19:
-        sys.exit(f"instrumentSources has {len(names)} entries, expected 19 - "
-                 "update the grid logic/comment in this generator "
-                 "deliberately, then re-run")
-    tracker = (ROOT / "Tracker.cpp").read_text()
-    if "12 + val" not in tracker:
-        sys.exit("bank-fold rule (bank1 voiceNum = 12 + val) no longer found "
-                 "in Tracker.cpp - update the grid derivation here")
+    pitched_bank0 = bank1_offset - 2
+    expected = pitched_bank0 + 9
+    if len(names) != expected:
+        sys.exit(
+            f"instrumentSources has {len(names)} entries, expected {expected} "
+            f"(kInstrumentBank1Offset={bank1_offset})"
+        )
     return names
 
 
-def build_sections():
-    src = (ROOT / "InputManager.cpp").read_text()
-    sections = []
-    for fnum in (1, 2, 3, 4):
-        fn_rows, _, _ = parse_mapper(src, FN_MAPPERS[fnum])
-        note_rows, hdr, _ = parse_mapper(src, NOTE_MAPPERS[fnum])
-        if hdr is None:
-            sys.exit(f"missing HDR: in {NOTE_MAPPERS[fnum]}")
-        # Silkscreen order: F-key row first, then note rows as documented.
-        rows = fn_rows + note_rows
-        sections.append((str(fnum), hdr, rows))
-    return sections
-
-
-def build_grids(names):
-    """Return per-bank cells [(key, label)] in silkscreen display order."""
-    electrical = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-    bank0 = {"C": "drums", "C#": "sfx"}            # voiceNum 0/1 special cases
-    for index in range(10):                            # voiceNum 2..11
-        bank0[electrical[2 + index]] = names[index]
+def build_grids(names, notes, bank1_offset: int, display_order):
+    bank0 = {"C": "drums", "C#": "sfx"}
+    for index in range(bank1_offset - 2):
+        bank0[notes[2 + index]] = names[index]
     bank1 = {}
-    for index in range(9):                             # voiceNum 12..20
-        bank1[electrical[index]] = names[10 + index]
-    for keyChar in electrical[9:]:                       # voiceNum 21..23 unprovisioned
-        bank1[keyChar] = "silent"
-    display_order = [8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3]  # G# row, E row, C row
-    grids = []
-    for bank in (bank0, bank1):
-        cells = [(electrical[index], bank[electrical[index]])
-                 for index in display_order]
-        grids.append(cells)
-    return grids
+    bank1_count = len(names) - (bank1_offset - 2)
+    for index in range(bank1_count):
+        bank1[notes[index]] = names[(bank1_offset - 2) + index]
+    for key in notes[bank1_count:]:
+        bank1[key] = "silent"
+    return [
+        [(notes[i], bank[notes[i]]) for i in display_order]
+        for bank in (bank0, bank1)
+    ]
 
-
-# --------------------------------------------------------------------------
-# Rendering
-# --------------------------------------------------------------------------
 
 WIDTH, HEIGHT = 1000, 1560
 BG = (247, 246, 242)
@@ -121,10 +75,6 @@ KEY_EDGE = (190, 186, 176)
 
 
 def find_font(size, bold=False):
-    """Resolve fonts by GENERIC family name - Pillow asks the OS
-    (CoreText on macOS, fontconfig on Linux, registry on Windows), so no
-    hardcoded paths. Order: bold-capable names, then any-portable
-    standbys, then Pillow's own scalable default (bundled Aileron)."""
     names = (["Arial Bold", "Verdana Bold"] if bold else []) + [
         "Arial", "Verdana", "Helvetica", "DejaVu Sans", "Liberation Sans",
     ]
@@ -182,7 +132,7 @@ def section(fnum, header, rows, posY):
     badge(40, posY + 1, "F" + fnum)
     text(84, posY, header, font=F_HEAD)
     posY += 34
-    for label, _cmd, desc in rows:
+    for label, desc in rows:
         text(84, posY, label, font=F_LBL, fill=ACCENT)
         text(214, posY, desc, font=F_NOTE)
         posY += 29
@@ -205,30 +155,29 @@ def voice_grid(posY, bank, cells):
 
 
 def main():
-    sections = build_sections()
-    grids = build_grids(parse_instruments())
+    contract = load_contract()
+    grids = build_grids(
+        parse_instruments(contract["bank1_offset"]),
+        contract["notes"],
+        contract["bank1_offset"],
+        contract["note_display_order"],
+    )
 
-    text(40, 30, "CrunchE Keypad Quick-ref", font=F_TITLE)
+    text(40, 30, TITLE, font=F_TITLE)
 
-
-    ROWS = [
-        ["F1", "F2", "F3", "F4"],
-        ["G#", "A", "A#", "B"],
-        ["E", "F", "F#", "G"],
-        ["C", "C#", "D", "D#"],
-    ]
-    COLX, KW, KH, GAP = [170 + 202 * index for index in range(4)], 180, 60, 10
+    COLX = [170 + 202 * index for index in range(4)]
+    KW, KH, GAP = 180, 60, 10
     TOP = 100
-    for index, label in enumerate(
-            ["function row", "octave row", "octave row", "base notes"]):
+    for index, (label, keys) in enumerate(contract["silkscreen"]):
         posY = TOP + index * (KH + GAP)
         text(24, posY + 24, label, font=F_SMALL, fill=MUTED)
-        for col, key in enumerate(ROWS[index]):
+        for col, key in enumerate(keys):
             posX = COLX[col]
-            is_func = index == 0
-            draw.rounded_rectangle([posX, posY, posX + KW, posY + KH], 10,
-                                   fill=(ACCENT if is_func else KEY_BG),
-                                   outline=KEY_EDGE, width=2)
+            is_func = keys[0].startswith("F")
+            draw.rounded_rectangle(
+                [posX, posY, posX + KW, posY + KH], 10,
+                fill=(ACCENT if is_func else KEY_BG),
+                outline=KEY_EDGE, width=2)
             bbox = draw.textbbox((0, 0), key, font=F_KEY)
             draw.text((posX + (KW - bbox[2] + bbox[0]) / 2 - bbox[0],
                        posY + (KH - bbox[3] + bbox[1]) / 2 - bbox[1]), key,
@@ -236,24 +185,20 @@ def main():
                       fill=(255, 255, 255) if is_func else INK)
 
     posY = TOP + 4 * (KH + GAP) + 6
-    text(COLX[0], posY,
-         "F1-F4 arm a function (its LED stays lit); the next key applies it.",
-         font=F_SMALL, fill=MUTED)
+    text(COLX[0], posY, BLURB, font=F_SMALL, fill=MUTED)
 
     posY = 415
-    for _idx, (fnum, header, rows) in enumerate(sections):
-        posY = section(fnum, header, rows, posY)
-        if fnum == "1":  # instrument tables follow the F1 section
+    for arm in contract["arms"]:
+        fnum = arm["arm"][1]
+        rows = [(r["label"], r["help"]) for r in arm["sheet_rows"]]
+        posY = section(fnum, arm["header"], rows, posY)
+        if arm["arm"] == "F1":
             posY = voice_grid(posY, 0, grids[0])
             posY = voice_grid(posY, 1, grids[1])
 
-    posY = wrapped(40, posY + 4,
-                   "No F key held: C-B records a note into the selected track while "
-                   "playing, or plays it live when stopped. Notes store the instrument "
-                   "and octave held at record time. Voice names above are the sample "
-                   "sources in Samples/.")
+    posY = wrapped(40, posY + 4, FOOTER)
 
-    out = pathlib.Path("docs")
+    out = ROOT / "docs"
     out.mkdir(exist_ok=True)
     final = img.crop((0, 0, WIDTH, min(HEIGHT, posY + 68)))
     final = final.resize((min(800, round(final.width * 0.8)),

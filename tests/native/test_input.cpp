@@ -1,11 +1,9 @@
 // Native gate: InputManager state machine + full command matrix.
 //
 // Verifies (a) every transition of Idle -> Armed -> Apply -> Idle, and
-// (b) all 48 armed-note and 16 armed-function combinations map to the
-// exact Command + argument published in docs/InstA.png. The expected
-// table below is an INDEPENDENT restatement of the keypad contract -
-// if InputManager.cpp and this table ever disagree, the sheet lies and
-// this gate must fail.
+// (b) all 64 armed combinations against the matrix derived from
+// KeypadMaps.cpp (same SoT as docs/InstA.png). Regenerate with
+// tools/gen_keypad.sh / tools/gen_keypad_matrix.py.
 #include "InputManager.h"
 
 #include <cstdio>
@@ -129,50 +127,7 @@ struct Row {
 
 void TestMatrix() {
   std::printf("== Command matrix ==\n");
-  const std::vector<Row> rows = {
-      // F1 armed: every note selects an instrument; F-keys set octave.
-      {'M', 'A', Command::Instrument, 0},  {'M', 'B', Command::Instrument, 1},
-      {'M', 'C', Command::Instrument, 2},  {'M', 'D', Command::Instrument, 3},
-      {'M', 'E', Command::Instrument, 4},  {'M', 'F', Command::Instrument, 5},
-      {'M', 'G', Command::Instrument, 6},  {'M', 'H', Command::Instrument, 7},
-      {'M', 'I', Command::Instrument, 8},  {'M', 'J', Command::Instrument, 9},
-      {'M', 'K', Command::Instrument, 10}, {'M', 'L', Command::Instrument, 11},
-      {'M', 'M', Command::Octave, 0},      {'M', 'N', Command::Octave, 1},
-      {'M', 'O', Command::Octave, 2},      {'M', 'P', Command::Octave, 3},
-
-      // F2 armed: arp/filter, delay, envelope by third-row register; F-keys
-      // set the track volume.
-      {'N', 'A', Command::Arp, 0},      {'N', 'B', Command::Arp, 1},
-      {'N', 'C', Command::Arp, 2},      {'N', 'D', Command::Arp, 3},
-      {'N', 'E', Command::Delay, 0},    {'N', 'F', Command::Delay, 1},
-      {'N', 'G', Command::Delay, 2},    {'N', 'H', Command::Delay, 3},
-      {'N', 'I', Command::Envelope, 0}, {'N', 'J', Command::Envelope, 1},
-      {'N', 'K', Command::Envelope, 2}, {'N', 'L', Command::Envelope, 3},
-      {'N', 'M', Command::Volume, 0},   {'N', 'N', Command::Volume, 1},
-      {'N', 'O', Command::Volume, 2},   {'N', 'P', Command::Volume, 3},
-
-      // F3 armed: clear pattern, switch pattern, clear track; F-keys select
-      // the recording track.
-      {'O', 'A', Command::ClearPattern, 0}, {'O', 'B', Command::ClearPattern, 1},
-      {'O', 'C', Command::ClearPattern, 2}, {'O', 'D', Command::ClearPattern, 3},
-      {'O', 'E', Command::Pattern, 0},      {'O', 'F', Command::Pattern, 1},
-      {'O', 'G', Command::Pattern, 2},      {'O', 'H', Command::Pattern, 3},
-      {'O', 'I', Command::ClearTrack, 0},   {'O', 'J', Command::ClearTrack, 1},
-      {'O', 'K', Command::ClearTrack, 2},   {'O', 'L', Command::ClearTrack, 3},
-      {'O', 'M', Command::SelectTrack, 0},  {'O', 'N', Command::SelectTrack, 1},
-      {'O', 'O', Command::SelectTrack, 2},  {'O', 'P', Command::SelectTrack, 3},
-
-      // F4 armed: song, transport, bank, clipboard, trim, tempo; F-keys set
-      // note length or toggle play.
-      {'P', 'A', Command::NewSong, 0},           {'P', 'B', Command::NewSong, 1},
-      {'P', 'C', Command::BankToggle, 0},        {'P', 'D', Command::SongMode, 0},
-      {'P', 'E', Command::PatternClipboard, 0},  {'P', 'F', Command::PatternClipboard, 1},
-      {'P', 'G', Command::Trim, 0},              {'P', 'H', Command::Trim, 1},
-      {'P', 'I', Command::Tempo, 0},             {'P', 'J', Command::Tempo, 1},
-      {'P', 'K', Command::Tempo, 2},             {'P', 'L', Command::Tempo, 3},
-      {'P', 'M', Command::NoteLength, 0},        {'P', 'N', Command::NoteLength, 1},
-      {'P', 'O', Command::NoteLength, 2},        {'P', 'P', Command::Play, 0},
-  };
+#include "keypad_matrix.generated.inc"
 
   for (const Row &row : rows) {
     InputManager im;

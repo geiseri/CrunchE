@@ -46,8 +46,9 @@ public:
   // Bit i set when track i triggered a note on the latest update frame.
   uint8_t lastTriggeredMask = 0;
   // Instrument bank: F4+D toggles. Bank 0 selects voiceNum 0-11 (drums,
-  // sfx, originals); bank 1 maps F1+note to voiceNum 12-23 (added samples;
-  // 21-23 are unprovisioned slots that play silence).
+  // sfx, originals); bank 1 maps F1+note to voiceNum
+  // kInstrumentBank1Offset..(offset+11) (KeypadConstants.h; top slots may
+  // be silent if unprovisioned in Voice.cpp).
   int instrumentBank = 0;
   // Diagnostic: peak |sample| each voice generated since last reset. A voice
   // whose LED blinks but whose peak reads 0 is silent in code, not hardware.

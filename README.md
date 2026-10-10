@@ -14,6 +14,8 @@ Pressing a function key lights its LED solid while armed. Choose the second key 
 
 ![Crunch-E keypad reference](docs/InstA.png)
 
+Standalone printout derived from `KeypadMaps.cpp` / `KeypadConstants.h`. After editing those: `sh tools/gen_keypad.sh`.
+
 ## Key mapping
 
 Note rows (silkscreen): `G# A A# B`, `E F F# G`, `C C# D D#`. Firmware maps bottom→top note rows to inputs `0–3`, `4–7`, `8–11`. The top `F1–F4` row is function inputs `0–3`.

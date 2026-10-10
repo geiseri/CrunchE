@@ -1,4 +1,5 @@
 #include "Tracker.h"
+#include "KeypadConstants.h"
 #include "OutputMixer.h"
 #include "Voice.h"
 
@@ -13,10 +14,10 @@ Tracker::Tracker() {
   patternLength = 32;
   isPlaying = true;
   lastMillis = tracker_clock::Now();
-  bpms[0] = 120;
-  bpms[1] = 132;
-  bpms[2] = 145;
-  bpms[3] = 180;
+  bpms[0] = kTempoBpmTable[0];
+  bpms[1] = kTempoBpmTable[1];
+  bpms[2] = kTempoBpmTable[2];
+  bpms[3] = kTempoBpmTable[3];
   SetBPM(0);
 
   for (int track = 0; track < kTrackCount; track++) {
@@ -331,7 +332,8 @@ void Tracker::SetCommand(Command command, int val) {
     }
     break;
   case Command::Instrument:
-    currentVoice = instrumentBank == 0 ? val : 12 + val;
+    currentVoice =
+        instrumentBank == 0 ? val : kInstrumentBank1Offset + val;
     break;
   case Command::SongMode:
     allPatternPlay = !allPatternPlay;
