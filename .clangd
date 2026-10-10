@@ -1,0 +1,5 @@
+# clangd does not understand Xtensa/ESP32 GCC flags from PlatformIO's
+# compile_commands.json (e.g. -mlongcalls). Strip -m* / -f* so the index
+# can load without drv_unknown_argument diagnostics on every TU.
+CompileFlags:
+  Remove: [-m*, -f*]

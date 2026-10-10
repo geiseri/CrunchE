@@ -11,6 +11,49 @@ Crunch-E is a keychain form factor music-making platform that is both limited an
 
 ![alt text](https://raw.githubusercontent.com/xpndsprt/CrunchE/main/InstB.png)
 
+## Pin configuration
+
+All GPIO assignments are compile-time defines in `platformio.ini` (`build_flags`).
+Change a value there and rebuild — `main.cpp` reads the macros, not hard-coded pins.
+
+### Status strip LEDs (`LedManager` A–D)
+
+| Define | Default GPIO | Role |
+| --- | --- | --- |
+| `PIN_LED_A` | 1 | Track / function LED A |
+| `PIN_LED_B` | 2 | Track / function LED B |
+| `PIN_LED_C` | 4 | Track / function LED C |
+| `PIN_LED_D` | 8 | Track / function LED D |
+
+### Keypad matrix
+
+Rows are silkscreen `R4`→`R1` (top note row through bottom); columns are `L1`→`L4`.
+
+| Define | Default GPIO | Silkscreen |
+| --- | --- | --- |
+| `PIN_KEYPAD_ROW0` | 13 | R4 |
+| `PIN_KEYPAD_ROW1` | 3 | R3 |
+| `PIN_KEYPAD_ROW2` | 44 | R2 |
+| `PIN_KEYPAD_ROW3` | 43 | R1 |
+| `PIN_KEYPAD_COL0` | 9 | L1 |
+| `PIN_KEYPAD_COL1` | 10 | L2 |
+| `PIN_KEYPAD_COL2` | 11 | L3 |
+| `PIN_KEYPAD_COL3` | 12 | L4 |
+
+### NeoPixel
+
+| Define | Default GPIO | Role |
+| --- | --- | --- |
+| `PIN_NEOPIXEL` | 48 | RGB VU / status NeoPixel data |
+
+### I2S → MAX98357A
+
+| Define | Default GPIO | Amp pin |
+| --- | --- | --- |
+| `PIN_I2S_BCLK` | 6 | BCLK |
+| `PIN_I2S_WS` | 5 | LRCLK (WS) |
+| `PIN_I2S_DOUT` | 7 | DIN |
+
 ## CrunchOS Usage Instructions
 
 Crunch-e is a sampler/tracker inspired by the Mod trackers of the 90s. It's easily built from inexpensive modules that an Arduino enthusiast might have on hand. Each track can play a single note of any instrument at a given time, resulting in 4-voice polyphony. The keypad handles a single press at a time, and any instructions below assume you press the function button first, release it, and then press another button.
@@ -241,16 +284,18 @@ with left-justified instead of I2S support — this board uses the **A**.)
 | Protection | short-circuit, thermal shutdown; click-and-pop suppression; GSM/TDMA RF immunity |
 | Packages | 9-ball WLP 1.345 × 1.435 mm; 16-pin TQFN 3 × 3 mm (EP = ground for heat) |
 
-### How CrunchE wires it (main.cpp)
+### How CrunchE wires it
 
-| MAX98357A pin | Signal | ESP32-S3 GPIO |
-| --- | --- | --- |
-| BCLK (16) | bit clock | GPIO 6 |
-| LRCLK (14) | frame / "ws" | GPIO 5 |
-| DIN (1) | serial data | GPIO 7 |
-| SD_MODE (4) | shutdown + channel select | fixed on the sealed PCB (not firmware-controlled) |
-| GAIN_SLOT (2) | gain select | fixed on the sealed PCB (not firmware-controlled) |
-| OUTP/OUTN | BTL speaker pair | 8 Ω / 1 W, 55 mm full-range speaker |
+I2S pins are set in `platformio.ini` (`PIN_I2S_*`); see **Pin configuration** above.
+
+| MAX98357A pin | Signal | Define | Default GPIO |
+| --- | --- | --- | --- |
+| BCLK (16) | bit clock | `PIN_I2S_BCLK` | 6 |
+| LRCLK (14) | frame / "ws" | `PIN_I2S_WS` | 5 |
+| DIN (1) | serial data | `PIN_I2S_DOUT` | 7 |
+| SD_MODE (4) | shutdown + channel select | — | fixed on the sealed PCB (not firmware-controlled) |
+| GAIN_SLOT (2) | gain select | — | fixed on the sealed PCB (not firmware-controlled) |
+| OUTP/OUTN | BTL speaker pair | — | 8 Ω / 1 W, 55 mm full-range speaker |
 
 The firmware runs `I2S_MODE_STD` (standard Philips I2S), 16-bit, mono slot at
 22 050 Hz — well inside the chip's range. Outputs are bridge-tied (BTL): the

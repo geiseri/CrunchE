@@ -2,7 +2,6 @@
 #include "Arduino.h"
 
 LedManager::LedManager(int pinA, int pinB, int pinC, int pinD) {
-
   outPinA = pinA;
   outPinB = pinB;
   outPinC = pinC;
@@ -23,10 +22,28 @@ void LedManager::SetPattern(bool pPlay, int p) {
 
 void LedManager::writePin(int i, int level) {
   switch (i) {
-    case 0:  digitalWrite(outPinA, level); break;
-    case 1:  digitalWrite(outPinB, level); break;
-    case 2:  digitalWrite(outPinC, level); break;
-    default: digitalWrite(outPinD, level); break;
+    case 0:
+      digitalWrite(outPinA, level);
+      break;
+    case 1:
+      digitalWrite(outPinB, level);
+      break;
+    case 2:
+      digitalWrite(outPinC, level);
+      break;
+    case 3:
+      digitalWrite(outPinD, level);
+      break;
+    default:
+      break;
+  }
+}
+
+void LedManager::resyncPins() {
+  for (int i = 0; i < 4; i++) {
+    const bool blinkOn = blink[i].active && blink[i].on;
+    const bool metroOn = timeLit > 0 && i == litCol && !blink[i].active;
+    writePin(i, (blinkOn || metroOn) ? HIGH : LOW);
   }
 }
 
@@ -44,13 +61,18 @@ bool LedManager::isIdle() const {
 
 void LedManager::UpdateLed() {
   const unsigned long now = millis();
-  if (command == LedCommand::Applied) {
-    float timeDelta = static_cast<float>(now) - lastMillis;
-    lastMillis = static_cast<float>(now);
+  if (command != LedCommand::Applied) {
+    // Freeze metronome decay while an arm hold owns the strip.
+    lastMillis = now;
+  } else {
+    const float timeDelta = static_cast<float>(now - lastMillis);
+    lastMillis = now;
 
     if (timeLit > 0) {
       timeLit -= timeDelta;
       if (timeLit <= 0) {
+        timeLit = 0;
+        litCol = -1;
         // Retract the metronome pulse, but never fight an active slow blink.
         for (int i = 0; i < 4; i++) {
           if (!blink[i].active) {
@@ -84,13 +106,15 @@ void LedManager::UpdateLed() {
         writePin(i, HIGH);
       }
     }
-  }
-  if (patternPlay) {
+  }  // command == Applied
+
+  // Pattern blink only in Applied; arm holds must freeze all blink displays.
+  if (patternPlay && command == LedCommand::Applied) {
     // Start-of-display edge: clear any held activity pulse so the blink
     // begins from a dark strip, and restart the blink clock.
     if (!patternPlayWas) {
       patternPlayWas = true;
-      lastBlinkMillis = millis();
+      lastBlinkMillis = now;
       flipBlink = false;
       digitalWrite(outPinA, LOW);
       digitalWrite(outPinB, LOW);
@@ -98,8 +122,8 @@ void LedManager::UpdateLed() {
       digitalWrite(outPinD, LOW);
     }
     // Toggle at ~4 Hz (writes only on transitions, not every audio frame).
-    if (millis() - lastBlinkMillis >= 250) {
-      lastBlinkMillis = millis();
+    if (now - lastBlinkMillis >= 250) {
+      lastBlinkMillis = now;
       flipBlink = !flipBlink;
       const int level = flipBlink ? HIGH : LOW;
       switch (pattern) {
@@ -118,37 +142,51 @@ void LedManager::UpdateLed() {
       }
     }
   } else {
+    // Drop the edge so arm→Applied or leaving song mode restarts cleanly.
     patternPlayWas = false;
   }
 }
 
 void LedManager::SetCommand(LedCommand com) {
+  if (com == LedCommand::None) {
+    return;
+  }
   command = com;
-  digitalWrite(outPinA, LOW);
-  digitalWrite(outPinB, LOW);
-  digitalWrite(outPinC, LOW);
-  digitalWrite(outPinD, LOW);
   switch (command) {
     case LedCommand::ArmVoice:
       digitalWrite(outPinA, HIGH);
+      digitalWrite(outPinB, LOW);
+      digitalWrite(outPinC, LOW);
+      digitalWrite(outPinD, LOW);
       break;
     case LedCommand::ArmTone:
+      digitalWrite(outPinA, LOW);
       digitalWrite(outPinB, HIGH);
+      digitalWrite(outPinC, LOW);
+      digitalWrite(outPinD, LOW);
       break;
     case LedCommand::ArmPattern:
+      digitalWrite(outPinA, LOW);
+      digitalWrite(outPinB, LOW);
       digitalWrite(outPinC, HIGH);
+      digitalWrite(outPinD, LOW);
       break;
     case LedCommand::ArmSong:
+      digitalWrite(outPinA, LOW);
+      digitalWrite(outPinB, LOW);
+      digitalWrite(outPinC, LOW);
       digitalWrite(outPinD, HIGH);
       break;
-    case LedCommand::Applied:  // neutral: all clear, blinks resume
-    case LedCommand::None:     // no event this frame
+    case LedCommand::Applied:
+      // Resume blink/metronome phase on the pins (arm cleared them).
+      resyncPins();
+      break;
+    case LedCommand::None:
       break;
   }
 }
 
 void LedManager::SetLit(float time, int col) {
-
   if (command != LedCommand::Applied || col < 0 || col > 3) {
     return;
   }
@@ -158,12 +196,15 @@ void LedManager::SetLit(float time, int col) {
     return;
   }
 
-  writePin(0, LOW);
-  writePin(1, LOW);
-  writePin(2, LOW);
-  writePin(3, LOW);
+  // Clear only idle pins so other tracks' slow blinks keep their phase.
+  for (int i = 0; i < 4; i++) {
+    if (!blink[i].active) {
+      writePin(i, LOW);
+    }
+  }
   writePin(col, HIGH);
   timeLit = time;
+  litCol = col;
 }
 
 void LedManager::SetLitMask(uint8_t mask) {
