@@ -142,6 +142,7 @@ If an LED never lights, swap its leads once—backward LEDs simply stay dark. If
 | `PIN_LED_B` | 2 | Track / function LED B |
 | `PIN_LED_C` | 4 | Track / function LED C |
 | `PIN_LED_D` | 8 | Track / function LED D |
+| `PIN_METRONOME_LED` | 48 | Beat metronome (GPIO on/off; Super Mini often has an LED here) |
 
 ### Keypad
 

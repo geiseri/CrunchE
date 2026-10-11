@@ -36,6 +36,10 @@ Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, kKeypadRows, kKeypadC
 I2SClass I2S;
 const int sampleRate = static_cast<int>(kAudioSampleRate);
 
+// GPIO metronome on PIN_METRONOME_LED: HIGH for tempoBlink ms each beat.
+float metronomeLitMs = 0;
+unsigned long metronomeLastMs = 0;
+
 // Soft ~2 s Cmaj9 swell through OutputMixer. Voices are static: each embeds
 // an 8 KB history buffer; a local array would overflow the Arduino task stack.
 static void playBootJingle() {
@@ -111,7 +115,27 @@ static void updateStripLeds() {
   ledManager.UpdateLed();
 }
 
+static void updateMetronomeLed() {
+  const unsigned long now = millis();
+  if (tracker.tempoBlink > 0) {
+    metronomeLitMs = tracker.tempoBlink;
+    digitalWrite(PIN_METRONOME_LED, HIGH);
+  }
+  if (metronomeLitMs > 0) {
+    metronomeLitMs -= static_cast<float>(now - metronomeLastMs);
+    if (metronomeLitMs <= 0) {
+      metronomeLitMs = 0;
+      digitalWrite(PIN_METRONOME_LED, LOW);
+    }
+  }
+  metronomeLastMs = now;
+}
+
 void setup() {
+  pinMode(PIN_METRONOME_LED, OUTPUT);
+  digitalWrite(PIN_METRONOME_LED, LOW);
+  metronomeLastMs = millis();
+
   I2S.setPins(PIN_I2S_BCLK, PIN_I2S_WS, PIN_I2S_DOUT);
 
   if (!I2S.begin(I2S_MODE_STD, sampleRate, I2S_DATA_BIT_WIDTH_16BIT,
@@ -140,6 +164,7 @@ void loop() {
   I2S.write(reinterpret_cast<const uint8_t *>(&outputSample),
             sizeof(outputSample));
 
+  updateMetronomeLed();
   updateStripLeds();
   inputManager.EndFrame();
 }
