@@ -107,8 +107,7 @@ You can build a playable CrunchOS box from common hobby modules and jumper wires
 | MAX98357A I2S amp **breakout** | Turns digital audio from the ESP32 into speaker-level sound |
 | Small speaker (often 4–8 Ω, ~0.5–1 W) | Connects **only** to the amp’s speaker pads—not to the ESP32 |
 | Arduino-style **4×4 membrane keypad** | Notes and function keys (F1–F4 + twelve notes) |
-| Four ordinary LEDs + four ~100 Ω resistors | Track / function status strip |
-| Optional: one WS2812 / NeoPixel | RGB VU meter on `PIN_NEOPIXEL` |
+| Four ordinary LEDs + four ~100 Ω resistors | Track / function status strip (GPIO metronome) |
 | Breadboard and jumper wires | Prototyping without soldering (or solder later) |
 
 USB cable for your board (data-capable), and **PlatformIO** to build and flash.
@@ -123,7 +122,7 @@ USB cable for your board (data-capable), and **PlatformIO** to build and flash.
 
 ![DIY build layout](InstB.png)
 
-Wire by function: LEDs, keypad, amp (I2S + speaker), optional NeoPixel. Then set the GPIO numbers in `platformio.ini` to match **your** wiring (tables below are one common Super Mini–style default, not mandatory).
+Wire by function: LEDs, keypad, amp (I2S + speaker). Then set the GPIO numbers in `platformio.ini` to match **your** wiring (tables below are one common Super Mini–style default, not mandatory).
 
 ### Status LEDs (polarity matters)
 
@@ -163,14 +162,6 @@ A 4×4 membrane keypad is a grid of switches with **eight** pins (four rows, fou
 | `PIN_KEYPAD_COL3` | 12 | L4 |
 
 If every key is wrong by a row or column, you almost certainly swapped two ribbon pins—fix the table against the printed letters on the keypad tail.
-
-### NeoPixel (optional)
-
-| Define | Default GPIO | Role |
-| --- | --- | --- |
-| `PIN_NEOPIXEL` | 48 | Data in (DIN) for the RGB VU / status pixel |
-
-Also connect the pixel’s **5 V** (or VDD) and **GND** to the board. Data alone is not enough. Use a logic-level-friendly pixel; many WS2812 parts expect ~5 V power with data from a 3.3 V ESP32—if it flickers, check your module’s notes.
 
 ### Amp and speaker (MAX98357A)
 

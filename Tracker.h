@@ -50,9 +50,6 @@ public:
   // kInstrumentBank1Offset..(offset+11) (KeypadConstants.h; top slots may
   // be silent if unprovisioned in Voice.cpp).
   int instrumentBank = 0;
-  // Diagnostic: peak |sample| each voice generated since last reset. A voice
-  // whose LED blinks but whose peak reads 0 is silent in code, not hardware.
-  int voicePeak[kTrackCount] = {0, 0, 0, 0};
   Tracker();
   [[nodiscard]] int UpdateTracker();
   void SetCommand(Command command, int val);

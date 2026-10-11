@@ -1,8 +1,6 @@
 #include <Arduino.h>
 #include <Keypad.h>
 #include <ESP_I2S.h>
-#include <FastLED.h>
-#include <algorithm>
 
 #include "AudioConfig.h"
 #include "OutputMixer.h"
@@ -37,16 +35,6 @@ Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, kKeypadRows, kKeypadC
 
 I2SClass I2S;
 const int sampleRate = static_cast<int>(kAudioSampleRate);
-
-constexpr int kNumLeds = 1;
-constexpr uint32_t kLedUpdateIntervalMs = 33;  // ~30 fps; FastLED.show() blocks
-constexpr int kVuPeakFullScale = 8000;         // post-/4 mix ceiling for brightness map
-constexpr int kVuPeakDivisor = 32;             // maps peak → 0-250 brightness
-
-CRGB leds[kNumLeds];
-int ledPeak = 0;
-uint8_t ledBrightness = 0;
-uint32_t lastLedUpdate = 0;
 
 // Soft ~2 s Cmaj9 swell through OutputMixer. Voices are static: each embeds
 // an 8 KB history buffer; a local array would overflow the Arduino task stack.
@@ -108,32 +96,6 @@ static void playBootJingle() {
 }
 
 
-static void updateNeoPixelVu() {
-  const uint32_t now = millis();
-  if (now - lastLedUpdate < kLedUpdateIntervalMs) {
-    return;
-  }
-  lastLedUpdate = now;
-
-  // Pattern 2 is bass-only: VU follows the bass voice peak for mixing diagnostics.
-  const int diagPeak =
-      tracker.currentPattern == 2 ? std::max(ledPeak, tracker.voicePeak[1])
-                                  : ledPeak;
-  const uint8_t instant = static_cast<uint8_t>(
-      std::min(diagPeak, kVuPeakFullScale) / kVuPeakDivisor);
-  ledBrightness = static_cast<uint8_t>((3 * ledBrightness + instant) / 4);
-  ledPeak = 0;
-
-  // Hue = track color + pattern nudge; brightness = loudness.
-  const uint8_t trackHue = static_cast<uint8_t>(
-      tracker.selectedTrack * 64 + tracker.currentPattern * 8);
-  leds[0] = CHSV(trackHue, 255, ledBrightness);
-  FastLED.show();
-
-  tracker.voicePeak[0] = tracker.voicePeak[1] = tracker.voicePeak[2] =
-      tracker.voicePeak[3] = 0;
-}
-
 static void updateStripLeds() {
   // Voice-activity mask wins; else metronome outside song mode; else pattern blink.
   if (tracker.lastTriggeredMask != 0) {
@@ -150,7 +112,6 @@ static void updateStripLeds() {
 }
 
 void setup() {
-  FastLED.addLeds<NEOPIXEL, PIN_NEOPIXEL>(leds, kNumLeds);
   I2S.setPins(PIN_I2S_BCLK, PIN_I2S_WS, PIN_I2S_DOUT);
 
   if (!I2S.begin(I2S_MODE_STD, sampleRate, I2S_DATA_BIT_WIDTH_16BIT,
@@ -179,12 +140,6 @@ void loop() {
   I2S.write(reinterpret_cast<const uint8_t *>(&outputSample),
             sizeof(outputSample));
 
-  const int level = abs(outputSample);
-  if (level > ledPeak) {
-    ledPeak = level;
-  }
-
-  updateNeoPixelVu();
   updateStripLeds();
   inputManager.EndFrame();
 }

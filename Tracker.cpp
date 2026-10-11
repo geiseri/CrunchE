@@ -141,12 +141,7 @@ int Tracker::UpdateTracker() {
 
   int32_t masterSample = 0;
   for (uint8_t track = 0; track < kTrackCount; track++) {
-    const int32_t voiceSample = voices[track].UpdateVoice();
-    const int32_t magnitude = voiceSample < 0 ? -voiceSample : voiceSample;
-    if (magnitude > voicePeak[track]) {
-      voicePeak[track] = static_cast<int>(magnitude);
-    }
-    masterSample += voiceSample;
+    masterSample += voices[track].UpdateVoice();
   }
   return static_cast<int>(masterSample);
 }
